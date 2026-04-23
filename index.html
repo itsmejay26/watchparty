@@ -972,7 +972,7 @@ function parseVideoInput(raw){
   if(fbInfo.id) return { type:'facebook', url, videoId:fbInfo.id, fbUrl:fbInfo.href, fbMode:fbInfo.mode || 'video', startAt:0 };
 
   const biliInfo = extractBilibiliInfo(url);
-  if(biliInfo.id) return { type:'bilibili', url, videoId:biliInfo.id, biliPage:biliInfo.page || 1, startAt:0 };
+  if(biliInfo.id || biliInfo.playUrl) return { type:'bilibili', url, videoId:biliInfo.id || '', biliPage:biliInfo.page || 1, biliMode:biliInfo.mode || 'video', biliUrl:biliInfo.playUrl || '', startAt:0 };
 
   const ttId = extractTikTokId(url);
   if(ttId) return { type:'tiktok', url, videoId:ttId, startAt:0 };
@@ -1042,27 +1042,42 @@ function extractFacebookInfo(url){
 
 function extractBilibiliInfo(url){
   const patterns = [
-    /bilibili\.com\/video\/(BV[0-9A-Za-z]+)/i,
-    /bilibili\.com\/video\/av(\d+)/i,
-    /bilibili\.com\/video\/?\?bvid=(BV[0-9A-Za-z]+)/i,
-    /player\.bilibili\.com\/player\.html\?[^#]*bvid=(BV[0-9A-Za-z]+)/i,
-    /player\.bilibili\.com\/player\.html\?[^#]*aid=(\d+)/i
+    { mode:'video', re:/bilibili\.com\/video\/(BV[0-9A-Za-z]+)/i },
+    { mode:'video', re:/bilibili\.com\/video\/av(\d+)/i },
+    { mode:'video', re:/bilibili\.com\/video\/?\?bvid=(BV[0-9A-Za-z]+)/i },
+    { mode:'video', re:/player\.bilibili\.com\/player\.html\?[^#]*bvid=(BV[0-9A-Za-z]+)/i },
+    { mode:'video', re:/player\.bilibili\.com\/player\.html\?[^#]*aid=(\d+)/i },
+    { mode:'play',  re:/bilibili\.tv\/(?:[a-z]{2}\/)?play\/(\d+)(?:\/(\d+))?/i },
+    { mode:'play',  re:/tv\.bilibili\.tv\/(?:[a-z]{2}\/)?play\/(\d+)(?:\/(\d+))?/i },
+    { mode:'video', re:/bilibili\.tv\/(?:[a-z]{2}\/)?video\/(\d+)/i },
+    { mode:'video', re:/tv\.bilibili\.tv\/(?:[a-z]{2}\/)?video\/(\d+)/i }
   ];
   for(const p of patterns){
-    const m = url.match(p);
+    const m = url.match(p.re);
     if(m){
-      if(/^av\d+$/i.test(m[1])) return { id:m[1], page:1 };
-      return { id:m[1], page:1 };
+      if(p.mode === 'play'){
+        return { id:'', page:Number(m[2] || 1) || 1, mode:'play', playUrl:url };
+      }
+      if(/^av\d+$/i.test(m[1])) return { id:m[1], page:1, mode:'video' };
+      return { id:m[1], page:1, mode:'video' };
     }
   }
   try {
     const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./i, '').toLowerCase();
+    if(host.includes('bilibili.tv')){
+      const path = parsed.pathname || '';
+      const playMatch = path.match(/\/play\/(\d+)(?:\/(\d+))?/i);
+      if(playMatch) return { id:'', page:Number(playMatch[2] || 1) || 1, mode:'play', playUrl:url };
+      const videoMatch = path.match(/\/video\/(\d+)/i);
+      if(videoMatch) return { id:videoMatch[1], page:1, mode:'video' };
+    }
     const bvid = parsed.searchParams.get('bvid') || '';
-    if(bvid) return { id:bvid, page:Number(parsed.searchParams.get('p') || parsed.searchParams.get('page') || 1) || 1 };
+    if(bvid) return { id:bvid, page:Number(parsed.searchParams.get('p') || parsed.searchParams.get('page') || 1) || 1, mode:'video' };
     const aid = parsed.searchParams.get('aid') || '';
-    if(aid) return { id:'av'+aid, page:Number(parsed.searchParams.get('p') || parsed.searchParams.get('page') || 1) || 1 };
+    if(aid) return { id:'av'+aid, page:Number(parsed.searchParams.get('p') || parsed.searchParams.get('page') || 1) || 1, mode:'video' };
   } catch(_) {}
-  return { id:'', page:1 };
+  return { id:'', page:1, mode:'video' };
 }
 
 function extractInstagramInfo(url){
@@ -1144,6 +1159,8 @@ function sameMeaningfulState(a, b){
     a.videoId === b.videoId &&
     (a.socialKind || 'reel') === (b.socialKind || 'reel') &&
     (a.fbMode || 'video') === (b.fbMode || 'video') &&
+    (a.biliMode || 'video') === (b.biliMode || 'video') &&
+    (a.biliUrl || '') === (b.biliUrl || '') &&
     Number(a.biliPage || 1) === Number(b.biliPage || 1) &&
     a.playing === b.playing &&
     Math.abs(Number(a.currentTime || 0) - Number(b.currentTime || 0)) < 0.35 &&
@@ -1339,7 +1356,7 @@ function buildTikTokSrc(id, autoplay){
 
 function buildFacebookSrc(href, autoplay = false, mode = 'video'){
   const target = encodeURIComponent(href);
-  const common = `show_text=0&autoplay=${autoplay ? 1 : 0}&width=100%`;
+  const common = `show_text=0&autoplay=${autoplay ? 1 : 0}`;
   if(mode === 'post'){
     return `https://www.facebook.com/plugins/post.php?href=${target}&${common}`;
   }
@@ -1352,7 +1369,18 @@ function loadFacebookFrame(href, autoplay = false, mode = 'video'){
   resetCaptionUI();
 }
 
-function buildBilibiliSrc(id, page = 1, autoplay = false, startAt = 0){
+function buildBilibiliSrc(id, page = 1, autoplay = false, startAt = 0, mode = 'video', playUrl = ''){
+  if(mode === 'play'){
+    try {
+      const u = new URL(playUrl || id);
+      if(autoplay) u.searchParams.set('autoplay', '1');
+      if(startAt && Number(startAt) > 0) u.searchParams.set('t', String(Math.floor(startAt)));
+      return u.toString();
+    } catch(_) {
+      return playUrl || id;
+    }
+  }
+
   const videoId = String(id || '').trim();
   const safePage = Number(page) > 0 ? Number(page) : 1;
   const params = new URLSearchParams({
@@ -1370,10 +1398,10 @@ function buildBilibiliSrc(id, page = 1, autoplay = false, startAt = 0){
   }
   return `https://player.bilibili.com/player.html?${params.toString()}`;
 }
-function loadBilibiliFrame(id, page = 1, autoplay = false, startAt = 0){
+function loadBilibiliFrame(id, page = 1, autoplay = false, startAt = 0, mode = 'video', playUrl = ''){
   setVisiblePlayer('bilibili');
   document.getElementById('videoEmpty').classList.add('hidden');
-  document.getElementById('ttFrame').src = buildBilibiliSrc(id, page, autoplay, startAt);
+  document.getElementById('ttFrame').src = buildBilibiliSrc(id, page, autoplay, startAt, mode, playUrl);
   resetCaptionUI();
 }
 
@@ -2180,7 +2208,7 @@ function loadStateIntoUI(state){
   }
 
   if(state.type === 'bilibili'){
-    loadBilibiliFrame(state.videoId, Number(state.biliPage || 1) || 1, !!state.playing, getLiveTargetTime(state));
+    loadBilibiliFrame(state.videoId, Number(state.biliPage || 1) || 1, !!state.playing, getLiveTargetTime(state), state.biliMode || 'video', state.biliUrl || state.url || '');
     setVisiblePlayer('bilibili');
     resetCaptionUI();
     syncUiFromPlayer();
@@ -2232,6 +2260,8 @@ function pushStateFromLocal(force = false){
     fbUrl: currentState?.fbUrl || '',
     fbMode: currentState?.fbMode || 'video',
     biliPage: currentState?.biliPage || 1,
+    biliMode: currentState?.biliMode || 'video',
+    biliUrl: currentState?.biliUrl || '',
     socialKind: currentSocialKind,
     playing: isPlaying(),
     currentTime: getCurrentTime(),
@@ -2310,7 +2340,7 @@ function loadVideo(){
     loadFacebookFrame(parsed.fbUrl || parsed.url, true, parsed.fbMode || 'video');
   } else if(parsed.type === 'bilibili'){
     resetCaptionUI();
-    loadBilibiliFrame(parsed.videoId, parsed.biliPage || 1, true, parsed.startAt || 0);
+    loadBilibiliFrame(parsed.videoId, parsed.biliPage || 1, true, parsed.startAt || 0, parsed.biliMode || 'video', parsed.biliUrl || parsed.url || '');
   } else if(parsed.type === 'tiktok'){
     resetCaptionUI();
     loadTikTokFrame(parsed.videoId, true);
@@ -2327,6 +2357,8 @@ function loadVideo(){
     fbUrl: parsed.fbUrl || '',
     fbMode: parsed.fbMode || 'video',
     biliPage: parsed.biliPage || 1,
+    biliMode: parsed.biliMode || 'video',
+    biliUrl: parsed.biliUrl || '',
     socialKind: parsed.socialKind || currentSocialKind || 'reel',
     playing: parsed.type === 'direct' || parsed.type === 'youtube' || parsed.type === 'tiktok' || parsed.type === 'facebook' || parsed.type === 'bilibili',
     currentTime: 0,
@@ -2346,7 +2378,7 @@ function playVideo(){
   if(currentType === 'youtube' && ytPlayer && ytReady) ytPlayer.playVideo();
   if(currentType === 'tiktok') ttPost('play');
   if(currentType === 'facebook') loadFacebookFrame(currentState?.fbUrl || currentUrl, true, currentState?.fbMode || 'video');
-  if(currentType === 'bilibili') loadBilibiliFrame(currentVideoId, currentState?.biliPage || 1, true, getCurrentTime());
+  if(currentType === 'bilibili') loadBilibiliFrame(currentVideoId, currentState?.biliPage || 1, true, getCurrentTime(), currentState?.biliMode || 'video', currentState?.biliUrl || currentUrl || '');
   if(currentType === 'instagram') toast('Instagram embeds do not support remote play controls.');
 
   pushStateFromLocal(true);
@@ -2382,7 +2414,7 @@ function seekBy(sec){
   } else if(currentType === 'facebook'){
     toast('Facebook embeds do not support seeking.');
   } else if(currentType === 'bilibili'){
-    loadBilibiliFrame(currentVideoId, currentState?.biliPage || 1, true, target);
+    loadBilibiliFrame(currentVideoId, currentState?.biliPage || 1, true, target, currentState?.biliMode || 'video', currentState?.biliUrl || currentUrl || '');
   } else if(currentType === 'instagram'){
     toast('Instagram embeds do not support seeking.');
   }
