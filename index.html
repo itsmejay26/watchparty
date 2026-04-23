@@ -428,10 +428,11 @@ button, input, input[type="range"], .video-wrap, video, iframe {
 }
 
 .controls-row {
+  position:relative;
   display:flex; justify-content:center; align-items:center;
   gap:12px; padding:10px 16px; background:var(--bg);
   border-top:1px solid var(--border); flex-shrink:0; flex-wrap:wrap;
-  z-index:3;
+  z-index:60;
 }
 .ctrl {
   width:46px; height:46px; border-radius:50%; border:none;
