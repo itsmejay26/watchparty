@@ -128,15 +128,18 @@ h1,h2 { font-family:'Syne',sans-serif; }
   position:relative; display:flex; align-items:center; justify-content:center;
   overflow:hidden;
 }
-#mainVideo {
+#mainVideo, #ytMount, #ttFrame {
   width:100%; height:100%;
+  border:none; display:block;
+}
+#mainVideo {
   object-fit:contain;
-  display:block;
   background:#000;
 }
 .video-empty {
-  display:flex; flex-direction:column; align-items:center; gap:8px;
-  color:var(--muted); pointer-events:none;
+  position:absolute; inset:0;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:8px; color:var(--muted); pointer-events:none; z-index:2;
 }
 .video-empty .big-icon { font-size:36px; }
 .video-empty p { font-size:12px; }
@@ -187,24 +190,18 @@ h1,h2 { font-family:'Syne',sans-serif; }
 .ctrl-btn.pause { background:rgba(239,68,68,.16); color:#ff9e9e; }
 .ctrl-btn.seek { background:rgba(91,141,239,.16); color:#c8daff; }
 
-.seek-wrap {
+.seek-wrap, .volume-wrap {
   display:flex; align-items:center; gap:10px; width:100%;
 }
 .seek-time {
   font-size:10px; color:rgba(255,255,255,.55); white-space:nowrap;
   font-family:'Space Mono',monospace;
 }
-.seekbar {
+.seekbar, .volume {
   width:100%; accent-color:var(--accent); height:4px;
-}
-.volume-wrap {
-  display:flex; align-items:center; gap:10px; width:100%;
 }
 .volume-label {
   font-size:11px; color:var(--muted); min-width:42px;
-}
-.volume {
-  width:100%; accent-color:var(--accent); height:4px;
 }
 
 .info-bar {
@@ -450,16 +447,19 @@ h1,h2 { font-family:'Syne',sans-serif; }
     <div class="status"><span class="dot"></span><span id="watchCount">1</span> online</div>
   </div>
 
-  <div class="video-wrap">
+  <div class="video-wrap" id="videoWrap">
     <div class="video-empty" id="videoEmpty">
       <div class="big-icon">📺</div>
-      <p>Paste a direct video link below to start</p>
+      <p>Paste a video link below to start</p>
     </div>
+
     <video id="mainVideo" playsinline class="hidden"></video>
+    <div id="ytMount" class="hidden"></div>
+    <iframe id="ttFrame" class="hidden" allowfullscreen allow="autoplay; fullscreen"></iframe>
 
     <div class="url-bar">
-      <input id="videoUrlInput" type="text" placeholder="Paste direct video URL here…" autocomplete="off" />
-      <button onclick="loadVideo()">Play</button>
+      <input id="videoUrlInput" type="text" placeholder="Paste YouTube, TikTok, MP4, or M3U8 link…" autocomplete="off" />
+      <button onclick="loadVideo()">Load</button>
     </div>
   </div>
 
@@ -549,8 +549,10 @@ const me = {
 
 let refs = {};
 let parts = {};
+let currentType = 'none';
 let currentUrl = '';
-let currentPlayerState = null;
+let currentVideoId = '';
+let currentState = null;
 let isApplyingRemote = false;
 let typingTimer = null;
 let isTyping = false;
@@ -559,6 +561,16 @@ let syncTimer = null;
 let localSeekDrag = false;
 let hlsInstance = null;
 let lastBroadcastAt = 0;
+
+let ytApiPromise = null;
+let ytPlayer = null;
+let ytReady = false;
+let pendingYTApply = null;
+
+let ttDuration = 0;
+let ttCurrentTime = 0;
+let ttMuted = false;
+let pendingTTApply = null;
 
 function esc(t){
   const d=document.createElement('div');
@@ -577,18 +589,362 @@ function fmt(s){
   return `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
 }
 function videoEl(){ return document.getElementById('mainVideo'); }
-function roomPlayerRef(){ return db.ref(`rooms/${me.roomId}/player`); }
+
+function setVisiblePlayer(type){
+  const v = document.getElementById('mainVideo');
+  const y = document.getElementById('ytMount');
+  const t = document.getElementById('ttFrame');
+
+  v.classList.add('hidden');
+  y.classList.add('hidden');
+  t.classList.add('hidden');
+
+  if(type === 'direct') v.classList.remove('hidden');
+  if(type === 'youtube') y.classList.remove('hidden');
+  if(type === 'tiktok') t.classList.remove('hidden');
+
+  document.getElementById('videoEmpty').classList.toggle('hidden', type !== 'none');
+}
+
+function parseVideoInput(raw){
+  const url = raw.trim();
+  if(!/^https?:\/\//i.test(url)) return null;
+
+  const ytId = extractYouTubeId(url);
+  if(ytId) return { type:'youtube', url, videoId:ytId, startAt:extractYouTubeStart(url) || 0 };
+
+  const ttId = extractTikTokId(url);
+  if(ttId) return { type:'tiktok', url, videoId:ttId, startAt:0 };
+
+  return { type:'direct', url, videoId:'', startAt:0 };
+}
+
+function extractYouTubeId(url){
+  const patterns = [
+    /youtu\.be\/([A-Za-z0-9_-]{11})/i,
+    /youtube\.com\/watch\?v=([A-Za-z0-9_-]{11})/i,
+    /youtube\.com\/embed\/([A-Za-z0-9_-]{11})/i,
+    /youtube\.com\/shorts\/([A-Za-z0-9_-]{11})/i
+  ];
+  for(const p of patterns){
+    const m = url.match(p);
+    if(m) return m[1];
+  }
+  return '';
+}
+function extractYouTubeStart(url){
+  const m = url.match(/[?&]t=(\d+)/i);
+  return m ? Number(m[1]) : 0;
+}
+function extractTikTokId(url){
+  const m1 = url.match(/tiktok\.com\/@[^/]+\/video\/(\d+)/i);
+  if(m1) return m1[1];
+  const m2 = url.match(/tiktok\.com\/player\/v1\/(\d+)/i);
+  if(m2) return m2[1];
+  return '';
+}
+
+function getDuration(){
+  if(currentType === 'direct'){
+    const v = videoEl();
+    return v.duration && isFinite(v.duration) ? v.duration : 0;
+  }
+  if(currentType === 'youtube' && ytPlayer && ytReady){
+    const d = ytPlayer.getDuration?.();
+    return isFinite(d) ? d : 0;
+  }
+  if(currentType === 'tiktok'){
+    return isFinite(ttDuration) ? ttDuration : 0;
+  }
+  return 0;
+}
+function getCurrentTime(){
+  if(currentType === 'direct'){
+    return videoEl().currentTime || 0;
+  }
+  if(currentType === 'youtube' && ytPlayer && ytReady){
+    return ytPlayer.getCurrentTime?.() || 0;
+  }
+  if(currentType === 'tiktok'){
+    return ttCurrentTime || 0;
+  }
+  return 0;
+}
+function isPlaying(){
+  if(currentType === 'direct'){
+    return !videoEl().paused;
+  }
+  if(currentType === 'youtube' && ytPlayer && ytReady){
+    return ytPlayer.getPlayerState?.() === YT.PlayerState.PLAYING;
+  }
+  if(currentType === 'tiktok'){
+    return currentState?.playing === true;
+  }
+  return false;
+}
+function getVolume(){
+  if(currentType === 'direct'){
+    return videoEl().volume ?? 1;
+  }
+  if(currentType === 'youtube' && ytPlayer && ytReady){
+    return (ytPlayer.getVolume?.() ?? 100) / 100;
+  }
+  if(currentType === 'tiktok'){
+    return ttMuted ? 0 : (currentState?.volume ?? 1);
+  }
+  return 1;
+}
+function getLiveTargetTime(state){
+  if(!state) return 0;
+  const base = Number(state.currentTime || 0);
+  if(!state.playing) return base;
+  const ts = Number(state.updatedAt || 0);
+  if(!ts) return base;
+  return Math.max(0, base + ((Date.now() - ts) / 1000));
+}
+
+function pushRoomState(patch, force = false){
+  if(!refs.player) return;
+  const now = Date.now();
+  if(!force && now - lastBroadcastAt < 120) return;
+  lastBroadcastAt = now;
+
+  const payload = {
+    ...(currentState || {}),
+    ...patch,
+    by: me.id,
+    updatedAt: now
+  };
+  refs.player.update(payload);
+}
+
+function syncUiFromPlayer(){
+  const seek = document.getElementById('seekBar');
+  const cur = document.getElementById('currentTimeLabel');
+  const dur = document.getElementById('durationLabel');
+  const d = getDuration();
+  const c = getCurrentTime();
+
+  if(d > 0){
+    seek.value = String(Math.round((c / d) * 1000));
+    cur.textContent = fmt(c);
+    dur.textContent = fmt(d);
+  } else {
+    seek.value = '0';
+    cur.textContent = fmt(c);
+    dur.textContent = '0:00';
+  }
+
+  document.getElementById('volumeBar').value = String(Math.round(getVolume() * 100));
+}
+
+function ensureYouTubeApi(){
+  if(window.YT?.Player) return Promise.resolve();
+  if(ytApiPromise) return ytApiPromise;
+
+  ytApiPromise = new Promise(resolve=>{
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = function(){
+      if(typeof prev === 'function') prev();
+      resolve();
+    };
+    const tag = document.createElement('script');
+    tag.src = 'https://www.youtube.com/iframe_api';
+    document.head.appendChild(tag);
+  });
+
+  return ytApiPromise;
+}
+
+function createOrResetYT(videoId, startAt = 0, autoplay = false){
+  ensureYouTubeApi().then(()=>{
+    setVisiblePlayer('youtube');
+    document.getElementById('videoEmpty').classList.add('hidden');
+
+    if(!ytPlayer){
+      ytPlayer = new YT.Player('ytMount', {
+        width:'100%',
+        height:'100%',
+        videoId,
+        playerVars:{
+          autoplay:0,
+          controls:0,
+          rel:0,
+          modestbranding:1,
+          playsinline:1,
+          disablekb:1,
+          iv_load_policy:3,
+          origin:location.origin,
+          enablejsapi:1
+        },
+        events:{
+          onReady:()=>{
+            ytReady = true;
+            if(pendingYTApply){
+              const s = pendingYTApply;
+              pendingYTApply = null;
+              applyYTState(s);
+            }
+            if(autoplay){
+              ytPlayer.seekTo(startAt || 0, true);
+              ytPlayer.playVideo();
+            }
+            syncUiFromPlayer();
+          },
+          onStateChange:(e)=>{
+            if(isApplyingRemote) return;
+            if(e.data === YT.PlayerState.PLAYING ||
+               e.data === YT.PlayerState.PAUSED ||
+               e.data === YT.PlayerState.ENDED){
+              pushStateFromLocal(true);
+            }
+          }
+        }
+      });
+      return;
+    }
+
+    if(ytReady){
+      ytPlayer.loadVideoById({ videoId, startSeconds:startAt || 0 });
+      if(!autoplay) ytPlayer.pauseVideo();
+    } else {
+      pendingYTApply = { videoId, startAt, autoplay };
+    }
+  });
+}
+
+function applyYTState(state){
+  if(!ytPlayer || !ytReady){
+    pendingYTApply = state;
+    return;
+  }
+
+  const target = getLiveTargetTime(state);
+  if(state.videoId && state.videoId !== currentVideoId){
+    ytPlayer.loadVideoById({ videoId:state.videoId, startSeconds:target || 0 });
+  } else {
+    ytPlayer.seekTo(target || 0, true);
+  }
+
+  if(typeof state.volume === 'number'){
+    const vol = Math.max(0, Math.min(100, Math.round(state.volume * 100)));
+    ytPlayer.setVolume(vol);
+    if(vol === 0) ytPlayer.mute(); else ytPlayer.unMute();
+  }
+
+  if(state.playing) ytPlayer.playVideo();
+  else ytPlayer.pauseVideo();
+}
+
+function buildTikTokSrc(id, autoplay){
+  return `https://www.tiktok.com/player/v1/${id}?controls=0&progress_bar=0&play_button=0&volume_control=0&fullscreen_button=0&timestamp=1&autoplay=${autoplay ? 1 : 0}&music_info=0&description=0`;
+}
+function loadTikTokFrame(id, autoplay = false){
+  setVisiblePlayer('tiktok');
+  document.getElementById('videoEmpty').classList.add('hidden');
+  document.getElementById('ttFrame').src = buildTikTokSrc(id, autoplay);
+}
+function ttPost(type, value = null){
+  const f = document.getElementById('ttFrame');
+  if(!f?.contentWindow) return;
+  f.contentWindow.postMessage({ type, value, 'x-tiktok-player': true }, '*');
+}
+function applyTikTokState(state){
+  const target = getLiveTargetTime(state);
+  if(state.videoId && state.videoId !== currentVideoId){
+    loadTikTokFrame(state.videoId, state.playing);
+  }
+
+  if(state.playing) ttPost('play');
+  else ttPost('pause');
+
+  ttPost('seekTo', target || 0);
+
+  if(state.volume != null){
+    if(state.volume <= 0) ttPost('mute');
+    else ttPost('unMute');
+  }
+}
+
+window.addEventListener('message', (event) => {
+  const d = event.data;
+  if(!d || d['x-tiktok-player'] !== true) return;
+
+  if(d.type === 'onPlayerReady'){
+    ttCurrentTime = 0;
+  }
+
+  if(d.type === 'onStateChange'){
+    if(isApplyingRemote) return;
+    if(d.value === 1 || d.value === 2 || d.value === 0){
+      pushStateFromLocal(true);
+    }
+  }
+
+  if(d.type === 'onCurrentTime'){
+    ttCurrentTime = Number(d.currentTime || 0);
+    ttDuration = Number(d.duration || 0);
+    syncUiFromPlayer();
+  }
+
+  if(d.type === 'onMute'){
+    ttMuted = !!d.value;
+    syncUiFromPlayer();
+  }
+
+  if(d.type === 'onVolumeChange'){
+    if(Number(d.value) === 0) ttMuted = true;
+    syncUiFromPlayer();
+  }
+
+  if(d.type === 'onPlayerError'){
+    toast('TikTok player error.');
+  }
+});
+
+function loadDirectVideo(url, startAt = 0, autoplay = false){
+  const v = videoEl();
+  setVisiblePlayer('direct');
+  document.getElementById('videoEmpty').classList.add('hidden');
+
+  if(hlsInstance){
+    hlsInstance.destroy();
+    hlsInstance = null;
+  }
+
+  if(/\.m3u8(\?|#|$)/i.test(url) && window.Hls && Hls.isSupported()){
+    hlsInstance = new Hls({ enableWorker:true, lowLatencyMode:true });
+    hlsInstance.loadSource(url);
+    hlsInstance.attachMedia(v);
+    hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+      try { if(isFinite(startAt) && startAt > 0) v.currentTime = Math.max(0, startAt); } catch(_) {}
+      if(autoplay) v.play().catch(()=>{});
+      syncUiFromPlayer();
+    });
+  } else {
+    if(v.src !== url){
+      v.src = url;
+      v.load();
+    }
+
+    v.onloadedmetadata = () => {
+      try { if(isFinite(startAt) && startAt > 0) v.currentTime = Math.max(0, startAt); } catch(_) {}
+      if(autoplay) v.play().catch(()=>{});
+      syncUiFromPlayer();
+    };
+  }
+}
 
 (function buildAvatarGrid(){
-  const g=document.getElementById('avatarGrid');
+  const g = document.getElementById('avatarGrid');
   SEEDS.forEach((s,i)=>{
-    const el=document.createElement('div');
-    el.className='av-opt'+(i===0?' sel':'');
-    el.innerHTML=`<img src="https://api.dicebear.com/7.x/avataaars/svg?seed=${s}" alt="${s}">`;
-    el.onclick=()=>{
+    const el = document.createElement('div');
+    el.className = 'av-opt' + (i===0 ? ' sel' : '');
+    el.innerHTML = `<img src="https://api.dicebear.com/7.x/avataaars/svg?seed=${s}" alt="${s}">`;
+    el.onclick = ()=>{
       document.querySelectorAll('.av-opt').forEach(a=>a.classList.remove('sel'));
       el.classList.add('sel');
-      me.avatar=s;
+      me.avatar = s;
     };
     g.appendChild(el);
   });
@@ -629,7 +985,7 @@ async function enterRoom(){
   await refs.me.set({
     name: me.name,
     avatar: me.avatar,
-    joinedAt: firebase.database.ServerValue.TIMESTAMP
+    joinedAt: Date.now()
   });
   refs.me.onDisconnect().remove();
   refs.myTyping.onDisconnect().remove();
@@ -657,19 +1013,34 @@ function leaveRoom(){
   Object.values(refs).forEach(r => r?.off?.());
   refs = {};
   parts = {};
-  currentPlayerState = null;
+  currentState = null;
+  currentType = 'none';
   currentUrl = '';
+  currentVideoId = '';
   stateReady = false;
   isApplyingRemote = false;
   isTyping = false;
   localSeekDrag = false;
+  ttDuration = 0;
+  ttCurrentTime = 0;
+  ttMuted = false;
+  pendingTTApply = null;
+  pendingYTApply = null;
 
   if(hlsInstance){ hlsInstance.destroy(); hlsInstance = null; }
+  if(ytPlayer){
+    try { ytPlayer.destroy(); } catch(_) {}
+    ytPlayer = null;
+    ytReady = false;
+  }
 
   const v = videoEl();
   v.pause();
   v.removeAttribute('src');
   v.load();
+
+  document.getElementById('ytMount').innerHTML = '';
+  document.getElementById('ttFrame').src = '';
 
   document.getElementById('roomScreen').classList.remove('active');
   document.getElementById('joinScreen').classList.add('active');
@@ -684,7 +1055,7 @@ function leaveRoom(){
   document.getElementById('currentTimeLabel').textContent = '0:00';
   document.getElementById('durationLabel').textContent = '0:00';
   document.getElementById('videoEmpty').classList.remove('hidden');
-  document.getElementById('mainVideo').classList.add('hidden');
+  setVisiblePlayer('none');
 }
 
 function copyCode(){
@@ -844,7 +1215,7 @@ async function sendMsg(){
     name: me.name,
     avatar: me.avatar,
     text,
-    ts: firebase.database.ServerValue.TIMESTAMP
+    ts: Date.now()
   });
   showBubble(me.id, text);
 }
@@ -862,348 +1233,305 @@ document.getElementById('chatField').addEventListener('input', function(){
 });
 document.getElementById('chatField').addEventListener('keypress', e=>{ if(e.key==='Enter') sendMsg(); });
 
-/* VIDEO SYNC */
-function isYouTube(url){ return /youtube\.com|youtu\.be/.test(url); }
+/* PLAYER STATE */
+function loadStateIntoUI(state){
+  if(!state || !state.type) return;
 
-function setVideoSource(url, startAt = 0, autoplay = false){
-  const v = videoEl();
-  const empty = document.getElementById('videoEmpty');
+  currentType = state.type;
+  currentUrl = state.url || '';
+  currentVideoId = state.videoId || '';
+  currentState = state;
 
-  if(isYouTube(url)){
-    toast('Use a direct video link. YouTube does not work with the shared video element.');
-    return false;
-  }
+  document.getElementById('videoUrlInput').value = state.url || '';
+  document.getElementById('syncStateLabel').textContent = `${state.type.toUpperCase()} ${state.playing ? 'Playing' : 'Paused'}`;
 
-  empty.classList.add('hidden');
-  v.classList.remove('hidden');
-
-  if(hlsInstance){
-    hlsInstance.destroy();
-    hlsInstance = null;
-  }
-
-  if(/\.m3u8(\?|#|$)/i.test(url) && window.Hls && Hls.isSupported()){
-    hlsInstance = new Hls({
-      enableWorker:true,
-      lowLatencyMode:true
-    });
-    hlsInstance.loadSource(url);
-    hlsInstance.attachMedia(v);
-  } else {
-    if(v.src !== url){
-      v.src = url;
-      v.load();
-    }
-  }
-
-  currentUrl = url;
-
-  v.onloadedmetadata = () => {
-    try {
-      if(isFinite(startAt) && startAt > 0) v.currentTime = Math.max(0, startAt);
-    } catch(_) {}
-    updateUiFromVideo();
-    if(autoplay) v.play().catch(()=>{});
-  };
-
-  return true;
-}
-
-function currentRemoteTime(state){
-  if(!state) return 0;
-  const base = Number(state.currentTime || 0);
-  if(!state.playing) return base;
-  const ts = Number(state.updatedAt || 0);
-  if(!ts) return base;
-  return base + ((Date.now() - ts) / 1000);
-}
-
-function broadcastPlayer(patch){
-  if(!refs.player) return;
-  const now = Date.now();
-  if(now - lastBroadcastAt < 120 && !patch.force) return;
-  lastBroadcastAt = now;
-
-  const payload = {
-    ...patch,
-    by: me.id,
-    updatedAt: firebase.database.ServerValue.TIMESTAMP
-  };
-  delete payload.force;
-  refs.player.update(payload);
-}
-
-function loadVideo(){
-  const url = document.getElementById('videoUrlInput').value.trim();
-  if(!url){ toast('Paste a video link first.'); return; }
-
-  const v = videoEl();
-  v.volume = Number(document.getElementById('volumeBar').value) / 100;
-
-  if(!setVideoSource(url, 0, true)) return;
-
-  broadcastPlayer({
-    url,
-    playing: true,
-    currentTime: 0,
-    volume: v.volume,
-    force: true
-  });
-
-  document.getElementById('syncStateLabel').textContent = 'Playing';
-}
-
-function playVideo(){
-  const v = videoEl();
-  if(!v.src && !currentUrl){
-    toast('Load a video first.');
-    return;
-  }
-  v.play().catch(()=>{});
-  broadcastPlayer({
-    playing: true,
-    currentTime: v.currentTime || 0,
-    volume: v.volume,
-    force: true
-  });
-  document.getElementById('syncStateLabel').textContent = 'Playing';
-}
-
-function pauseVideo(){
-  const v = videoEl();
-  if(!v.src && !currentUrl){
-    toast('Load a video first.');
-    return;
-  }
-  v.pause();
-  broadcastPlayer({
-    playing: false,
-    currentTime: v.currentTime || 0,
-    volume: v.volume,
-    force: true
-  });
-  document.getElementById('syncStateLabel').textContent = 'Paused';
-}
-
-function seekBy(sec){
-  const v = videoEl();
-  if(!v.src){ toast('Load a video first.'); return; }
-  const dur = (v.duration && isFinite(v.duration)) ? v.duration : Number.MAX_SAFE_INTEGER;
-  const next = Math.max(0, Math.min((v.currentTime || 0) + sec, dur));
-  try { v.currentTime = next; } catch(_) {}
-  broadcastPlayer({
-    currentTime: next,
-    playing: !v.paused,
-    volume: v.volume,
-    force: true
-  });
-}
-
-function updateUiFromVideo(){
-  const v = videoEl();
-  const seek = document.getElementById('seekBar');
-  const cur = document.getElementById('currentTimeLabel');
-  const dur = document.getElementById('durationLabel');
-
-  if(v.duration && isFinite(v.duration) && v.duration > 0){
-    seek.value = String(Math.round((v.currentTime / v.duration) * 1000));
-    cur.textContent = fmt(v.currentTime);
-    dur.textContent = fmt(v.duration);
-  } else {
-    seek.value = '0';
-    cur.textContent = '0:00';
-    dur.textContent = '0:00';
-  }
-
-  document.getElementById('volumeBar').value = String(Math.round((v.volume ?? 1) * 100));
-}
-
-function bindLocalVideo(){
-  const v = videoEl();
-  const seek = document.getElementById('seekBar');
-  const vol = document.getElementById('volumeBar');
-
-  v.addEventListener('loadedmetadata', updateUiFromVideo);
-  v.addEventListener('durationchange', updateUiFromVideo);
-  v.addEventListener('timeupdate', ()=> {
-    if(!localSeekDrag) updateUiFromVideo();
-  });
-  v.addEventListener('volumechange', updateUiFromVideo);
-
-  v.addEventListener('play', ()=> {
-    if(isApplyingRemote) return;
-    broadcastPlayer({
-      playing: true,
-      currentTime: v.currentTime || 0,
-      volume: v.volume,
-      force: true
-    });
-    document.getElementById('syncStateLabel').textContent = 'Playing';
-  });
-
-  v.addEventListener('pause', ()=> {
-    if(isApplyingRemote) return;
-    broadcastPlayer({
-      playing: false,
-      currentTime: v.currentTime || 0,
-      volume: v.volume,
-      force: true
-    });
-    document.getElementById('syncStateLabel').textContent = 'Paused';
-  });
-
-  v.addEventListener('seeked', ()=> {
-    if(isApplyingRemote) return;
-    if(!v.src) return;
-    broadcastPlayer({
-      currentTime: v.currentTime,
-      playing: !v.paused,
-      volume: v.volume,
-      force: true
-    });
-  });
-
-  seek.addEventListener('input', ()=> {
-    localSeekDrag = true;
-    const d = v.duration && isFinite(v.duration) ? v.duration : 0;
-    const t = d ? (Number(seek.value) / 1000) * d : 0;
-    document.getElementById('currentTimeLabel').textContent = fmt(t);
-  });
-
-  seek.addEventListener('change', ()=> {
-    const d = v.duration && isFinite(v.duration) ? v.duration : 0;
-    if(!d){
-      localSeekDrag = false;
-      return;
-    }
-    const target = (Number(seek.value) / 1000) * d;
-    try { v.currentTime = target; } catch(_) {}
-    broadcastPlayer({
-      currentTime: target,
-      playing: !v.paused,
-      volume: v.volume,
-      force: true
-    });
-    localSeekDrag = false;
-  });
-
-  vol.addEventListener('input', ()=> {
-    v.volume = Math.max(0, Math.min(1, Number(vol.value) / 100));
-    broadcastPlayer({
-      volume: v.volume,
-      currentTime: v.currentTime || 0,
-      playing: !v.paused,
-      force: true
-    });
-  });
-}
-
-function applyRemotePlayerState(state){
-  const v = videoEl();
-  if(!state) return;
-
-  currentPlayerState = state;
-
-  if(state.url && state.url !== currentUrl){
-    setVideoSource(state.url, 0, false);
-  }
-
-  if(typeof state.volume === 'number' && isFinite(state.volume)){
-    v.volume = Math.max(0, Math.min(1, state.volume));
-  }
-
-  const targetTime = currentRemoteTime(state);
-
-  if(state.url){
-    if(state.playing){
-      if(v.paused) v.play().catch(()=>{});
-      if(isFinite(targetTime) && Math.abs(v.currentTime - targetTime) > 0.75){
-        try { v.currentTime = Math.max(0, targetTime); } catch(_) {}
-      }
+  if(state.type === 'direct'){
+    setVisiblePlayer('direct');
+    if(state.url !== videoEl().src){
+      loadDirectVideo(state.url, getLiveTargetTime(state), !!state.playing);
     } else {
-      if(!v.paused) v.pause();
-      if(isFinite(state.currentTime) && Math.abs(v.currentTime - state.currentTime) > 0.75){
-        try { v.currentTime = Math.max(0, Number(state.currentTime || 0)); } catch(_) {}
+      const v = videoEl();
+      if(typeof state.volume === 'number') v.volume = Math.max(0, Math.min(1, state.volume));
+      const target = getLiveTargetTime(state);
+      if(Math.abs((v.currentTime || 0) - target) > 0.75){
+        try { v.currentTime = target; } catch(_) {}
       }
+      if(state.playing && v.paused) v.play().catch(()=>{});
+      if(!state.playing && !v.paused) v.pause();
+      syncUiFromPlayer();
     }
   }
 
-  updateUiFromVideo();
+  if(state.type === 'youtube'){
+    if(!ytPlayer || !ytReady || currentVideoId !== state.videoId){
+      createOrResetYT(state.videoId, getLiveTargetTime(state), !!state.playing);
+      pendingYTApply = state;
+    } else {
+      applyYTState(state);
+    }
+    setVisiblePlayer('youtube');
+    syncUiFromPlayer();
+  }
+
+  if(state.type === 'tiktok'){
+    if(currentVideoId !== state.videoId){
+      loadTikTokFrame(state.videoId, !!state.playing);
+      pendingTTApply = state;
+    } else {
+      applyTikTokState(state);
+    }
+    setVisiblePlayer('tiktok');
+    syncUiFromPlayer();
+  }
 }
 
 function listenPlayer(){
   refs.player.on('value', snap=>{
     const state = snap.val();
-    if(!state || !state.url){
+    if(!state || !state.type){
       document.getElementById('syncStateLabel').textContent = 'Ready';
       return;
     }
 
     if(!stateReady){
       stateReady = true;
-      currentPlayerState = state;
-      document.getElementById('syncStateLabel').textContent = state.playing ? 'Playing' : 'Paused';
-      setVideoSource(state.url, currentRemoteTime(state), !!state.playing);
-      applyRemotePlayerState(state);
+      currentState = state;
+      loadStateIntoUI(state);
       return;
     }
 
-    if(state.by === me.id){
-      currentPlayerState = state;
-      document.getElementById('syncStateLabel').textContent = state.playing ? 'Playing' : 'Paused';
+    if(state.by === me.id && state.type === currentType){
+      currentState = state;
+      syncUiFromPlayer();
       return;
     }
 
     isApplyingRemote = true;
-    document.getElementById('syncStateLabel').textContent = state.playing ? 'Playing' : 'Paused';
-    applyRemotePlayerState(state);
+    currentState = state;
+    loadStateIntoUI(state);
     setTimeout(()=>{ isApplyingRemote = false; }, 250);
   });
+}
+
+function pushStateFromLocal(force = false){
+  if(!refs.player) return;
+  const patch = {
+    type: currentType,
+    url: currentUrl,
+    videoId: currentVideoId,
+    playing: isPlaying(),
+    currentTime: getCurrentTime(),
+    volume: getVolume()
+  };
+  pushRoomState(patch, force);
+  currentState = { ...(currentState || {}), ...patch };
 }
 
 function startSyncLoop(){
   clearInterval(syncTimer);
   syncTimer = setInterval(()=>{
-    const v = videoEl();
-    if(!v.src || v.paused || isApplyingRemote || !currentPlayerState || !currentPlayerState.playing) return;
+    if(!currentState) return;
+    syncUiFromPlayer();
 
-    const expected = currentRemoteTime(currentPlayerState);
-    if(Math.abs(v.currentTime - expected) > 2.0){
-      isApplyingRemote = true;
-      try { v.currentTime = Math.max(0, expected); } catch(_) {}
-      setTimeout(()=>{ isApplyingRemote = false; }, 200);
+    const expected = getLiveTargetTime(currentState);
+    const d = getDuration();
+    if(currentState.playing && d > 0){
+      if(currentType === 'direct'){
+        const v = videoEl();
+        if(v.src && !v.paused && Math.abs((v.currentTime || 0) - expected) > 2.0){
+          isApplyingRemote = true;
+          try { v.currentTime = expected; } catch(_) {}
+          setTimeout(()=>{ isApplyingRemote = false; }, 200);
+        }
+      }
+
+      if(currentType === 'youtube' && ytPlayer && ytReady){
+        const c = ytPlayer.getCurrentTime?.() || 0;
+        if(Math.abs(c - expected) > 2.0) ytPlayer.seekTo(expected, true);
+      }
+
+      if(currentType === 'tiktok'){
+        if(Math.abs(ttCurrentTime - expected) > 2.0){
+          ttPost('seekTo', expected);
+        }
+      }
     }
-  }, 2000);
+  }, 800);
 }
 
+/* DIRECT VIDEO EVENTS */
+const directVideo = document.getElementById('mainVideo');
+directVideo.addEventListener('loadedmetadata', ()=>{ if(currentType==='direct') syncUiFromPlayer(); });
+directVideo.addEventListener('durationchange', ()=>{ if(currentType==='direct') syncUiFromPlayer(); });
+directVideo.addEventListener('timeupdate', ()=>{ if(currentType==='direct' && !localSeekDrag) syncUiFromPlayer(); });
+directVideo.addEventListener('volumechange', ()=>{ if(currentType==='direct') syncUiFromPlayer(); });
+directVideo.addEventListener('play', ()=>{ if(!isApplyingRemote && currentType==='direct') pushStateFromLocal(true); });
+directVideo.addEventListener('pause', ()=>{ if(!isApplyingRemote && currentType==='direct') pushStateFromLocal(true); });
+directVideo.addEventListener('seeked', ()=>{ if(!isApplyingRemote && currentType==='direct') pushStateFromLocal(true); });
+
 /* CONTROLS */
-const SVG = {
-  micOn:`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>`,
-  micOff:`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V5a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="22"/></svg>`,
-  camOn:`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>`,
-  camOff:`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16 2 6"/><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/><line x1="2" y1="2" x2="22" y2="22"/></svg>`
-};
+function loadVideo(){
+  const raw = document.getElementById('videoUrlInput').value.trim();
+  if(!raw){ toast('Paste a video link first.'); return; }
+
+  const parsed = parseVideoInput(raw);
+  if(!parsed){ toast('Paste a valid link starting with https://'); return; }
+
+  currentType = parsed.type;
+  currentUrl = parsed.url;
+  currentVideoId = parsed.videoId || '';
+
+  document.getElementById('videoEmpty').classList.add('hidden');
+  document.getElementById('syncStateLabel').textContent = `${parsed.type.toUpperCase()} Loading`;
+
+  if(parsed.type === 'direct'){
+    loadDirectVideo(parsed.url, 0, true);
+  } else if(parsed.type === 'youtube'){
+    createOrResetYT(parsed.videoId, parsed.startAt || 0, true);
+  } else if(parsed.type === 'tiktok'){
+    loadTikTokFrame(parsed.videoId, true);
+  }
+
+  currentState = {
+    type: parsed.type,
+    url: parsed.url,
+    videoId: parsed.videoId || '',
+    playing: true,
+    currentTime: 0,
+    volume: Number(document.getElementById('volumeBar').value) / 100,
+    updatedAt: Date.now(),
+    by: me.id
+  };
+
+  pushRoomState(currentState, true);
+  syncUiFromPlayer();
+}
+
+function playVideo(){
+  if(!currentUrl){ toast('Load a video first.'); return; }
+
+  if(currentType === 'direct') videoEl().play().catch(()=>{});
+  if(currentType === 'youtube' && ytPlayer && ytReady) ytPlayer.playVideo();
+  if(currentType === 'tiktok') ttPost('play');
+
+  pushStateFromLocal(true);
+  document.getElementById('syncStateLabel').textContent = `${currentType.toUpperCase()} Playing`;
+}
+
+function pauseVideo(){
+  if(!currentUrl){ toast('Load a video first.'); return; }
+
+  if(currentType === 'direct') videoEl().pause();
+  if(currentType === 'youtube' && ytPlayer && ytReady) ytPlayer.pauseVideo();
+  if(currentType === 'tiktok') ttPost('pause');
+
+  pushStateFromLocal(true);
+  document.getElementById('syncStateLabel').textContent = `${currentType.toUpperCase()} Paused`;
+}
+
+function seekBy(sec){
+  if(!currentUrl){ toast('Load a video first.'); return; }
+
+  const d = getDuration();
+  const target = Math.max(0, Math.min(getCurrentTime() + sec, d || Number.MAX_SAFE_INTEGER));
+
+  if(currentType === 'direct'){
+    try { videoEl().currentTime = target; } catch(_) {}
+  } else if(currentType === 'youtube'){
+    if(ytPlayer && ytReady) ytPlayer.seekTo(target, true);
+  } else if(currentType === 'tiktok'){
+    ttPost('seekTo', target);
+  }
+
+  currentState = { ...(currentState || {}), currentTime: target };
+  pushRoomState({
+    type: currentType,
+    url: currentUrl,
+    videoId: currentVideoId,
+    playing: isPlaying(),
+    currentTime: target,
+    volume: getVolume()
+  }, true);
+  syncUiFromPlayer();
+}
+
+function setLocalVolume(percent){
+  const v = Math.max(0, Math.min(100, Number(percent)));
+
+  if(currentType === 'direct'){
+    videoEl().volume = v / 100;
+  } else if(currentType === 'youtube'){
+    if(ytPlayer && ytReady){
+      ytPlayer.setVolume(v);
+      if(v === 0) ytPlayer.mute(); else ytPlayer.unMute();
+    }
+  } else if(currentType === 'tiktok'){
+    if(v === 0) ttPost('mute');
+    else ttPost('unMute');
+  }
+
+  pushStateFromLocal(true);
+}
+
+document.getElementById('seekBar').addEventListener('input', function(){
+  localSeekDrag = true;
+  const d = getDuration();
+  if(!d) return;
+  const target = (Number(this.value) / 1000) * d;
+  document.getElementById('currentTimeLabel').textContent = fmt(target);
+});
+document.getElementById('seekBar').addEventListener('change', function(){
+  const d = getDuration();
+  if(!d){ localSeekDrag = false; return; }
+  const target = (Number(this.value) / 1000) * d;
+
+  if(currentType === 'direct'){
+    try { videoEl().currentTime = target; } catch(_) {}
+  } else if(currentType === 'youtube'){
+    if(ytPlayer && ytReady) ytPlayer.seekTo(target, true);
+  } else if(currentType === 'tiktok'){
+    ttPost('seekTo', target);
+  }
+
+  currentState = { ...(currentState || {}), currentTime: target };
+  pushRoomState({
+    type: currentType,
+    url: currentUrl,
+    videoId: currentVideoId,
+    playing: isPlaying(),
+    currentTime: target,
+    volume: getVolume()
+  }, true);
+
+  localSeekDrag = false;
+});
+document.getElementById('volumeBar').addEventListener('input', function(){
+  setLocalVolume(this.value);
+});
 
 function toggleMic(){
   me.micOn = !me.micOn;
   const b = document.getElementById('micBtn');
   b.className = `ctrl ${me.micOn ? 'on' : 'off'}`;
-  b.innerHTML = me.micOn ? SVG.micOn : SVG.micOff;
+  b.innerHTML = me.micOn
+    ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>`
+    : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V5a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="22"/></svg>`;
 }
-
 function toggleCam(){
   me.camOn = !me.camOn;
   const b = document.getElementById('camBtn');
   b.className = `ctrl ${me.camOn ? 'on' : 'off'}`;
-  b.innerHTML = me.camOn ? SVG.camOn : SVG.camOff;
+  b.innerHTML = me.camOn
+    ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>`
+    : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16 2 6"/><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/><line x1="2" y1="2" x2="22" y2="22"/></svg>`;
 }
 
 function toggleChat(){
   document.getElementById('chatDrawer').classList.toggle('open');
   setTimeout(()=>{
     const l=document.getElementById('msgsList');
-    l.scrollTop=l.scrollHeight;
-  },420);
+    l.scrollTop = l.scrollHeight;
+  }, 420);
 }
 function closeChatIfOpen(){
   document.getElementById('chatDrawer').classList.remove('open');
