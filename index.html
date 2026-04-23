@@ -664,7 +664,7 @@ button, input, input[type="range"], .video-wrap, video, iframe {
     <iframe id="ttFrame" class="hidden" allowfullscreen allow="autoplay; fullscreen"></iframe>
 
     <div class="url-bar">
-      <input id="videoUrlInput" type="text" placeholder="Paste YouTube, TikTok, Instagram, MP4, or M3U8 link…" autocomplete="off" />
+      <input id="videoUrlInput" type="text" placeholder="Paste YouTube, Facebook, Bilibili, TikTok, Instagram, MP4, or M3U8 link…" autocomplete="off" />
       <button onclick="loadVideo()">Load</button>
     </div>
   </div>
@@ -956,7 +956,7 @@ function setVisiblePlayer(type){
 
   if(type === 'direct') v.classList.remove('hidden');
   if(type === 'youtube') y.classList.remove('hidden');
-  if(type === 'tiktok' || type === 'instagram') t.classList.remove('hidden');
+  if(type === 'tiktok' || type === 'instagram' || type === 'facebook' || type === 'bilibili') t.classList.remove('hidden');
 
   document.getElementById('videoEmpty').classList.toggle('hidden', type !== 'none');
 }
@@ -967,6 +967,12 @@ function parseVideoInput(raw){
 
   const ytId = extractYouTubeId(url);
   if(ytId) return { type:'youtube', url, videoId:ytId, startAt:extractYouTubeStart(url) || 0 };
+
+  const fbInfo = extractFacebookInfo(url);
+  if(fbInfo.id) return { type:'facebook', url, videoId:fbInfo.id, fbUrl:fbInfo.href, startAt:0 };
+
+  const biliInfo = extractBilibiliInfo(url);
+  if(biliInfo.id) return { type:'bilibili', url, videoId:biliInfo.id, biliPage:biliInfo.page || 1, startAt:0 };
 
   const ttId = extractTikTokId(url);
   if(ttId) return { type:'tiktok', url, videoId:ttId, startAt:0 };
@@ -1002,6 +1008,49 @@ function extractTikTokId(url){
   return '';
 }
 
+function extractFacebookInfo(url){
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./i, '').toLowerCase();
+    if(!host.includes('facebook.com')) return { id:'', href:'' };
+
+    const hrefParam = parsed.searchParams.get('href');
+    if(hrefParam) {
+      const href = decodeURIComponent(hrefParam);
+      return { id: 'fb_' + btoa(href).replace(/=+$/,'').slice(0,24), href };
+    }
+
+    // Prefer the original public post/video URL for the embed plugin.
+    return { id: 'fb_' + btoa(url).replace(/=+$/,'').slice(0,24), href: url };
+  } catch(_) {
+    if(/facebook\.com/i.test(url)){
+      return { id: 'fb_' + btoa(url).replace(/=+$/,'').slice(0,24), href: url };
+    }
+    return { id:'', href:'' };
+  }
+}
+
+function extractBilibiliInfo(url){
+  const patterns = [
+    /bilibili\.com\/video\/(BV[0-9A-Za-z]+)/i,
+    /bilibili\.com\/video\/av(\d+)/i,
+    /bilibili\.com\/video\/?\?bvid=(BV[0-9A-Za-z]+)/i,
+    /player\.bilibili\.com\/player\.html\?[^#]*bvid=(BV[0-9A-Za-z]+)/i
+  ];
+  for(const p of patterns){
+    const m = url.match(p);
+    if(m) return { id:m[1], page:1 };
+  }
+  try {
+    const parsed = new URL(url);
+    const bvid = parsed.searchParams.get('bvid') || '';
+    if(bvid) return { id:bvid, page:Number(parsed.searchParams.get('p') || parsed.searchParams.get('page') || 1) || 1 };
+    const aid = parsed.searchParams.get('aid') || '';
+    if(aid) return { id:'av'+aid, page:Number(parsed.searchParams.get('p') || parsed.searchParams.get('page') || 1) || 1 };
+  } catch(_) {}
+  return { id:'', page:1 };
+}
+
 function extractInstagramInfo(url){
   const patterns = [
     { kind:'reel', re:/instagram\.com\/reel\/([A-Za-z0-9._-]+)/i },
@@ -1024,7 +1073,7 @@ function getDuration(){
     const d = ytPlayer.getDuration?.();
     return isFinite(d) ? d : 0;
   }
-  if(currentType === 'tiktok' || currentType === 'instagram'){
+  if(currentType === 'tiktok' || currentType === 'instagram' || currentType === 'facebook' || currentType === 'bilibili'){
     return isFinite(ttDuration) ? ttDuration : 0;
   }
   return 0;
@@ -1036,7 +1085,7 @@ function getCurrentTime(){
   if(currentType === 'youtube' && ytPlayer && ytReady){
     return ytPlayer.getCurrentTime?.() || 0;
   }
-  if(currentType === 'tiktok' || currentType === 'instagram'){
+  if(currentType === 'tiktok' || currentType === 'instagram' || currentType === 'facebook' || currentType === 'bilibili'){
     return ttCurrentTime || 0;
   }
   return 0;
@@ -1048,7 +1097,7 @@ function isPlaying(){
   if(currentType === 'youtube' && ytPlayer && ytReady){
     return ytPlayer.getPlayerState?.() === YT.PlayerState.PLAYING;
   }
-  if(currentType === 'tiktok' || currentType === 'instagram'){
+  if(currentType === 'tiktok' || currentType === 'instagram' || currentType === 'facebook' || currentType === 'bilibili'){
     return currentState?.playing === true;
   }
   return false;
@@ -1060,7 +1109,7 @@ function getVolume(){
   if(currentType === 'youtube' && ytPlayer && ytReady){
     return (ytPlayer.getVolume?.() ?? 100) / 100;
   }
-  if(currentType === 'tiktok' || currentType === 'instagram'){
+  if(currentType === 'tiktok' || currentType === 'instagram' || currentType === 'facebook' || currentType === 'bilibili'){
     return ttMuted ? 0 : (currentState?.volume ?? 1);
   }
   return 1;
@@ -1271,6 +1320,35 @@ function syncYouTubeCaptions(silent = false){
 function buildTikTokSrc(id, autoplay){
   return `https://www.tiktok.com/player/v1/${id}?controls=0&progress_bar=0&play_button=0&volume_control=0&fullscreen_button=0&timestamp=1&autoplay=${autoplay ? 1 : 0}&music_info=0&description=0`;
 }
+
+function buildFacebookSrc(href, autoplay = false){
+  const target = encodeURIComponent(href);
+  return `https://www.facebook.com/plugins/video.php?href=${target}&show_text=0&autoplay=${autoplay ? 1 : 0}&width=100%`;
+}
+function loadFacebookFrame(href, autoplay = false){
+  setVisiblePlayer('facebook');
+  document.getElementById('videoEmpty').classList.add('hidden');
+  document.getElementById('ttFrame').src = buildFacebookSrc(href, autoplay);
+  resetCaptionUI();
+}
+
+function buildBilibiliSrc(id, page = 1, autoplay = false){
+  const videoId = String(id || '').trim();
+  const safePage = Number(page) > 0 ? Number(page) : 1;
+  const baseId = encodeURIComponent(videoId);
+  if(/^av\d+$/i.test(videoId)){
+    const aid = encodeURIComponent(videoId.slice(2));
+    return `https://player.bilibili.com/player.html?aid=${aid}&page=${safePage}&autoplay=${autoplay ? 1 : 0}&high_quality=1&danmaku=0`;
+  }
+  return `https://player.bilibili.com/player.html?bvid=${baseId}&page=${safePage}&autoplay=${autoplay ? 1 : 0}&high_quality=1&danmaku=0`;
+}
+function loadBilibiliFrame(id, page = 1, autoplay = false){
+  setVisiblePlayer('bilibili');
+  document.getElementById('videoEmpty').classList.add('hidden');
+  document.getElementById('ttFrame').src = buildBilibiliSrc(id, page, autoplay);
+  resetCaptionUI();
+}
+
 function loadTikTokFrame(id, autoplay = false){
   setVisiblePlayer('tiktok');
   document.getElementById('videoEmpty').classList.add('hidden');
@@ -1476,7 +1554,7 @@ function syncCaptionTracksFromSource(){
     return;
   }
 
-  if(currentType === 'tiktok' || currentType === 'instagram'){
+  if(currentType === 'tiktok' || currentType === 'instagram' || currentType === 'facebook' || currentType === 'bilibili'){
     captionTracks = [];
     captionSource = currentType;
     renderCaptionPanel();
@@ -1571,7 +1649,7 @@ function selectCaptionTrack(index){
     return;
   }
 
-  if(currentType === 'tiktok' || currentType === 'instagram'){
+  if(currentType === 'tiktok' || currentType === 'instagram' || currentType === 'facebook' || currentType === 'bilibili'){
     toast('This embed does not expose caption tracks.');
     return;
   }
@@ -1593,7 +1671,7 @@ function toggleCaptionsEnabled(){
     return;
   }
 
-  if(currentType === 'tiktok' || currentType === 'instagram'){
+  if(currentType === 'tiktok' || currentType === 'instagram' || currentType === 'facebook' || currentType === 'bilibili'){
     toast('This embed does not expose caption tracks.');
     return;
   }
@@ -2064,6 +2142,21 @@ function loadStateIntoUI(state){
     syncUiFromPlayer();
   }
 
+  if(state.type === 'facebook'){
+    const fbHref = state.fbUrl || state.url || '';
+    loadFacebookFrame(fbHref, !!state.playing);
+    setVisiblePlayer('facebook');
+    resetCaptionUI();
+    syncUiFromPlayer();
+  }
+
+  if(state.type === 'bilibili'){
+    loadBilibiliFrame(state.videoId, Number(state.biliPage || 1) || 1, !!state.playing);
+    setVisiblePlayer('bilibili');
+    resetCaptionUI();
+    syncUiFromPlayer();
+  }
+
   if(state.type === 'instagram'){
     currentSocialKind = state.socialKind || 'reel';
     loadInstagramFrame(state.videoId, currentSocialKind);
@@ -2107,6 +2200,8 @@ function pushStateFromLocal(force = false){
     type: currentType,
     url: currentUrl,
     videoId: currentVideoId,
+    fbUrl: currentState?.fbUrl || '',
+    biliPage: currentState?.biliPage || 1,
     socialKind: currentSocialKind,
     playing: isPlaying(),
     currentTime: getCurrentTime(),
@@ -2180,6 +2275,12 @@ function loadVideo(){
   } else if(parsed.type === 'youtube'){
     resetCaptionUI();
     createOrResetYT(parsed.videoId, parsed.startAt || 0, true, true, getPreferredCaptionLang());
+  } else if(parsed.type === 'facebook'){
+    resetCaptionUI();
+    loadFacebookFrame(parsed.fbUrl || parsed.url, true);
+  } else if(parsed.type === 'bilibili'){
+    resetCaptionUI();
+    loadBilibiliFrame(parsed.videoId, parsed.biliPage || 1, true);
   } else if(parsed.type === 'tiktok'){
     resetCaptionUI();
     loadTikTokFrame(parsed.videoId, true);
@@ -2193,8 +2294,10 @@ function loadVideo(){
     type: parsed.type,
     url: parsed.url,
     videoId: parsed.videoId || '',
+    fbUrl: parsed.fbUrl || '',
+    biliPage: parsed.biliPage || 1,
     socialKind: parsed.socialKind || currentSocialKind || 'reel',
-    playing: parsed.type === 'direct' || parsed.type === 'youtube' || parsed.type === 'tiktok',
+    playing: parsed.type === 'direct' || parsed.type === 'youtube' || parsed.type === 'tiktok' || parsed.type === 'facebook' || parsed.type === 'bilibili',
     currentTime: 0,
     volume: Number(document.getElementById('volumeBar').value) / 100,
     updatedAt: serverNow(),
@@ -2211,6 +2314,8 @@ function playVideo(){
   if(currentType === 'direct') videoEl().play().catch(()=>{});
   if(currentType === 'youtube' && ytPlayer && ytReady) ytPlayer.playVideo();
   if(currentType === 'tiktok') ttPost('play');
+  if(currentType === 'facebook') loadFacebookFrame(currentState?.fbUrl || currentUrl, true);
+  if(currentType === 'bilibili') loadBilibiliFrame(currentVideoId, currentState?.biliPage || 1, true);
   if(currentType === 'instagram') toast('Instagram embeds do not support remote play controls.');
 
   pushStateFromLocal(true);
@@ -2223,6 +2328,8 @@ function pauseVideo(){
   if(currentType === 'direct') videoEl().pause();
   if(currentType === 'youtube' && ytPlayer && ytReady) ytPlayer.pauseVideo();
   if(currentType === 'tiktok') ttPost('pause');
+  if(currentType === 'facebook') toast('Facebook embeds do not support remote pause controls.');
+  if(currentType === 'bilibili') toast('Bilibili embeds do not support remote pause controls.');
   if(currentType === 'instagram') toast('Instagram embeds do not support remote pause controls.');
 
   pushStateFromLocal(true);
@@ -2241,6 +2348,10 @@ function seekBy(sec){
     if(ytPlayer && ytReady) ytPlayer.seekTo(target, true);
   } else if(currentType === 'tiktok'){
     ttPost('seekTo', target);
+  } else if(currentType === 'facebook'){
+    toast('Facebook embeds do not support seeking.');
+  } else if(currentType === 'bilibili'){
+    toast('Bilibili embeds do not support seeking.');
   } else if(currentType === 'instagram'){
     toast('Instagram embeds do not support seeking.');
   }
@@ -2271,6 +2382,10 @@ function setLocalVolume(percent){
   } else if(currentType === 'tiktok'){
     if(v === 0) ttPost('mute');
     else ttPost('unMute');
+  } else if(currentType === 'facebook'){
+    toast('Facebook embeds do not support volume control.');
+  } else if(currentType === 'bilibili'){
+    toast('Bilibili embeds do not support volume control.');
   } else if(currentType === 'instagram'){
     toast('Instagram embeds do not support volume control.');
   }
@@ -2296,6 +2411,10 @@ document.getElementById('seekBar').addEventListener('change', function(){
     if(ytPlayer && ytReady) ytPlayer.seekTo(target, true);
   } else if(currentType === 'tiktok'){
     ttPost('seekTo', target);
+  } else if(currentType === 'facebook'){
+    toast('Facebook embeds do not support seeking.');
+  } else if(currentType === 'bilibili'){
+    toast('Bilibili embeds do not support seeking.');
   } else if(currentType === 'instagram'){
     toast('Instagram embeds do not support seeking.');
   }
