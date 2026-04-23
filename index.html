@@ -29,6 +29,10 @@ body {
 }
 h1,h2 { font-family:'Syne',sans-serif; }
 
+button, input, input[type="range"], .video-wrap, video, iframe {
+  touch-action: manipulation;
+}
+
 .screen { display:none; height:100dvh; flex-direction:column; overflow:hidden; }
 .screen.active { display:flex; }
 
@@ -561,6 +565,7 @@ let syncTimer = null;
 let localSeekDrag = false;
 let hlsInstance = null;
 let lastBroadcastAt = 0;
+let serverOffset = 0;
 
 let ytApiPromise = null;
 let ytPlayer = null;
@@ -571,6 +576,14 @@ let ttDuration = 0;
 let ttCurrentTime = 0;
 let ttMuted = false;
 let pendingTTApply = null;
+
+db.ref('.info/serverTimeOffset').on('value', snap => {
+  serverOffset = snap.val() || 0;
+});
+
+function serverNow(){
+  return Date.now() + serverOffset;
+}
 
 function esc(t){
   const d=document.createElement('div');
@@ -700,22 +713,38 @@ function getLiveTargetTime(state){
   if(!state.playing) return base;
   const ts = Number(state.updatedAt || 0);
   if(!ts) return base;
-  return Math.max(0, base + ((Date.now() - ts) / 1000));
+  return Math.max(0, base + ((serverNow() - ts) / 1000));
+}
+
+function sameMeaningfulState(a, b){
+  if(!a || !b) return false;
+  return a.type === b.type &&
+    a.url === b.url &&
+    a.videoId === b.videoId &&
+    a.playing === b.playing &&
+    Math.abs(Number(a.currentTime || 0) - Number(b.currentTime || 0)) < 0.35 &&
+    Math.abs(Number(a.volume || 1) - Number(b.volume || 1)) < 0.01;
 }
 
 function pushRoomState(patch, force = false){
   if(!refs.player) return;
-  const now = Date.now();
-  if(!force && now - lastBroadcastAt < 120) return;
+
+  const next = {
+    ...(currentState || {}),
+    ...patch
+  };
+
+  if(!force && sameMeaningfulState(next, currentState)) return;
+
+  const now = serverNow();
+  if(!force && now - lastBroadcastAt < 150) return;
   lastBroadcastAt = now;
 
-  const payload = {
-    ...(currentState || {}),
-    ...patch,
-    by: me.id,
-    updatedAt: now
-  };
-  refs.player.update(payload);
+  next.by = me.id;
+  next.updatedAt = now;
+
+  currentState = next;
+  refs.player.update(next);
 }
 
 function syncUiFromPlayer(){
@@ -784,8 +813,7 @@ function createOrResetYT(videoId, startAt = 0, autoplay = false){
               const s = pendingYTApply;
               pendingYTApply = null;
               applyYTState(s);
-            }
-            if(autoplay){
+            } else if(autoplay){
               ytPlayer.seekTo(startAt || 0, true);
               ytPlayer.playVideo();
             }
@@ -805,7 +833,11 @@ function createOrResetYT(videoId, startAt = 0, autoplay = false){
     }
 
     if(ytReady){
-      ytPlayer.loadVideoById({ videoId, startSeconds:startAt || 0 });
+      if(currentVideoId !== videoId){
+        ytPlayer.loadVideoById({ videoId, startSeconds:startAt || 0 });
+      } else {
+        ytPlayer.seekTo(startAt || 0, true);
+      }
       if(!autoplay) ytPlayer.pauseVideo();
     } else {
       pendingYTApply = { videoId, startAt, autoplay };
@@ -820,6 +852,7 @@ function applyYTState(state){
   }
 
   const target = getLiveTargetTime(state);
+
   if(state.videoId && state.videoId !== currentVideoId){
     ytPlayer.loadVideoById({ videoId:state.videoId, startSeconds:target || 0 });
   } else {
@@ -870,17 +903,6 @@ window.addEventListener('message', (event) => {
   const d = event.data;
   if(!d || d['x-tiktok-player'] !== true) return;
 
-  if(d.type === 'onPlayerReady'){
-    ttCurrentTime = 0;
-  }
-
-  if(d.type === 'onStateChange'){
-    if(isApplyingRemote) return;
-    if(d.value === 1 || d.value === 2 || d.value === 0){
-      pushStateFromLocal(true);
-    }
-  }
-
   if(d.type === 'onCurrentTime'){
     ttCurrentTime = Number(d.currentTime || 0);
     ttDuration = Number(d.duration || 0);
@@ -893,8 +915,12 @@ window.addEventListener('message', (event) => {
   }
 
   if(d.type === 'onVolumeChange'){
-    if(Number(d.value) === 0) ttMuted = true;
+    ttMuted = Number(d.value) === 0;
     syncUiFromPlayer();
+  }
+
+  if(d.type === 'onStateChange' && !isApplyingRemote){
+    pushStateFromLocal(true);
   }
 
   if(d.type === 'onPlayerError'){
@@ -985,7 +1011,7 @@ async function enterRoom(){
   await refs.me.set({
     name: me.name,
     avatar: me.avatar,
-    joinedAt: Date.now()
+    joinedAt: firebase.database.ServerValue.TIMESTAMP
   });
   refs.me.onDisconnect().remove();
   refs.myTyping.onDisconnect().remove();
@@ -1000,7 +1026,6 @@ async function enterRoom(){
   listenMessages();
   listenTyping();
   listenPlayer();
-  bindLocalVideo();
   startSyncLoop();
 }
 
@@ -1157,8 +1182,7 @@ function setTyping(on){
 
 /* CHAT */
 function listenMessages(){
-  const since = Date.now();
-  refs.messages.orderByChild('ts').startAt(since).on('child_added', snap=>{
+  refs.messages.orderByChild('ts').limitToLast(50).on('child_added', snap=>{
     const m = snap.val();
     if(!m) return;
     appendMsg(m, 'msgsList');
@@ -1215,7 +1239,7 @@ async function sendMsg(){
     name: me.name,
     avatar: me.avatar,
     text,
-    ts: Date.now()
+    ts: firebase.database.ServerValue.TIMESTAMP
   });
   showBubble(me.id, text);
 }
@@ -1324,7 +1348,6 @@ function pushStateFromLocal(force = false){
     volume: getVolume()
   };
   pushRoomState(patch, force);
-  currentState = { ...(currentState || {}), ...patch };
 }
 
 function startSyncLoop(){
@@ -1399,7 +1422,7 @@ function loadVideo(){
     playing: true,
     currentTime: 0,
     volume: Number(document.getElementById('volumeBar').value) / 100,
-    updatedAt: Date.now(),
+    updatedAt: serverNow(),
     by: me.id
   };
 
@@ -1531,7 +1554,7 @@ function toggleChat(){
   setTimeout(()=>{
     const l=document.getElementById('msgsList');
     l.scrollTop = l.scrollHeight;
-  }, 420);
+  },420);
 }
 function closeChatIfOpen(){
   document.getElementById('chatDrawer').classList.remove('open');
