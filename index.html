@@ -832,8 +832,7 @@
 
 <script>
 /* ═══════════════════════════════════════════════════════════════
-   🔥 FIREBASE CONFIG — Paste yours here!
-   (Get this from Firebase Console → Project Settings → Your App)
+   🔥 FIREBASE CONFIG
 ════════════════════════════════════════════════════════════════ */
 const FIREBASE_CONFIG = {
     apiKey:            "AIzaSyDi2OIPujrL_bxTSgPX0jAj63OM2HksWVY",
@@ -863,9 +862,9 @@ const me = {
 };
 
 let refs = {};
-let isSyncing = false;        // true while we're applying a remote sync (suppress local event echo)
-let currentVideoUrl = '';     // tracks which URL is currently loaded in the player
-let syncDebounceTimer = null; // debounce rapid seek/play/pause events before writing to Firebase
+let isSyncing = false;
+let currentVideoUrl = '';
+let syncDebounceTimer = null;
 
 /* ═══════════════════════════════════════════════════════════════
    JOIN SCREEN
@@ -914,23 +913,19 @@ async function joinRoom() {
 }
 
 async function enterRoom() {
-    // Firebase refs
     refs.room     = db.ref(`rooms/${me.roomId}`);
     refs.video    = db.ref(`rooms/${me.roomId}/video`);
     refs.users    = db.ref(`rooms/${me.roomId}/users`);
     refs.messages = db.ref(`rooms/${me.roomId}/messages`);
     refs.me       = refs.users.child(me.id);
 
-    // Register presence
     await refs.me.set({ name: me.name, avatar: me.avatar, joinedAt: firebase.database.ServerValue.TIMESTAMP });
     refs.me.onDisconnect().remove();
 
-    // Show room screen
     document.getElementById('joinScreen').classList.remove('active');
     document.getElementById('roomScreen').classList.add('active');
     document.getElementById('roomCodeDisplay').textContent = me.roomId;
 
-    // Start listeners
     listenUsers();
     listenVideo();
     listenMessages();
@@ -971,7 +966,6 @@ function renderParts() {
     });
 }
 
-/* ─── Floating chat bubble above avatar ─── */
 function showBubble(uid, text) {
     const item = document.getElementById(`pi-${uid}`);
     if (!item) return;
@@ -1031,23 +1025,19 @@ document.getElementById('chatField').addEventListener('keypress', e => { if (e.k
    VIDEO PLAYER
 ════════════════════════════════════════════════════════════════ */
 
-/* Called when user clicks ▶ Play — write new state then set up locally */
 function loadVideo() {
     const url = document.getElementById('videoUrlInput').value.trim();
     if (!url) return;
-    // Push to Firebase first; listenVideo will call setupPlayer for everyone (including us)
     refs.video.set({ url, playing: true, currentTime: 0, ts: Date.now(), by: me.id });
 }
 
 /*
  * setupPlayer(url, startTime, autoPlay)
- *   url       — video source
- *   startTime — where to start (seconds); default 0
- *   autoPlay  — whether to auto-play; default true
  *
- * For direct MP4: loads the video, seeks to startTime after metadata is ready,
- *                 then plays if autoPlay is true.
- * For YouTube:    embeds with ?start= so the remote participant joins at the right moment.
+ * FIX: isSyncing is set to true BEFORE vid.src and vid.load() so that the
+ * browser's automatic "pause" event fired during loading does not get pushed
+ * to Firebase and corrupt the shared state for all other watchers.
+ * The lock is only released after the intended play/pause has settled.
  */
 function setupPlayer(url, startTime = 0, autoPlay = true) {
     currentVideoUrl = url;
@@ -1076,26 +1066,27 @@ function setupPlayer(url, startTime = 0, autoPlay = true) {
     vid.classList.remove('hidden');
     pr.classList.remove('hidden');
 
-    // Remove old event listeners by cloning the element
-    const fresh = vid.cloneNode(false);
-    vid.parentNode.replaceChild(fresh, fresh); // no-op trick; use the same ref
-    // Actually just replace listeners properly:
-    vid.src  = url;
+    // Lock BEFORE touching src/load — the browser fires a spurious "pause"
+    // event during load which would otherwise overwrite Firebase with playing:false.
+    isSyncing = true;
+
+    vid.src = url;
     vid.load();
 
-    // Seek & play once metadata is ready
     const onMeta = () => {
         vid.removeEventListener('loadedmetadata', onMeta);
-        isSyncing = true;
         if (startTime > 0) vid.currentTime = startTime;
         if (autoPlay) {
-            vid.play().catch(() => {});
+            vid.play()
+                .then(() => setTimeout(() => { isSyncing = false; }, 400))
+                .catch(() => { isSyncing = false; });
+        } else {
+            setTimeout(() => { isSyncing = false; }, 400);
         }
-        setTimeout(() => { isSyncing = false; }, 600);
     };
     vid.addEventListener('loadedmetadata', onMeta);
 
-    /* ── Local event → Firebase (only when not applying a remote sync) ── */
+    /* ── Local event → Firebase (only when not syncing from remote) ── */
     vid.onplay = () => {
         if (isSyncing) return;
         pushVideoState(true, vid.currentTime);
@@ -1106,7 +1097,6 @@ function setupPlayer(url, startTime = 0, autoPlay = true) {
     };
     vid.onseeked = () => {
         if (isSyncing) return;
-        // Debounce rapid seeks (scrubbing)
         clearTimeout(syncDebounceTimer);
         syncDebounceTimer = setTimeout(() => {
             pushVideoState(!vid.paused, vid.currentTime);
@@ -1121,62 +1111,42 @@ function setupPlayer(url, startTime = 0, autoPlay = true) {
     };
 }
 
-/* Write current playback state to Firebase */
 function pushVideoState(playing, currentTime) {
     if (!refs.video) return;
     refs.video.update({ playing, currentTime, ts: Date.now(), by: me.id });
 }
 
-/*
- * listenVideo()
- * Subscribes to Firebase video state.
- * Handles three cases:
- *   1. New URL  → call setupPlayer with correct startTime (latency-compensated)
- *   2. Remote seek/pause/play → apply to local video element
- *   3. Own event echo → skip (to prevent feedback loops)
- */
 function listenVideo() {
     refs.video.on('value', snap => {
         const d = snap.val();
         if (!d || !d.url) return;
 
-        /* ── Sync URL input field ── */
         const inp = document.getElementById('videoUrlInput');
         if (inp.value !== d.url) inp.value = d.url;
 
         const isYT = d.url.includes('youtube.com') || d.url.includes('youtu.be');
 
-        /*
-         * Compensate for network latency: if the video was playing when the
-         * snapshot was written, add elapsed time since `d.ts` to get the
-         * expected current position.
-         */
-        const elapsed     = Math.max(0, (Date.now() - d.ts) / 1000);
+        const elapsed      = Math.max(0, (Date.now() - d.ts) / 1000);
         const expectedTime = d.playing ? d.currentTime + elapsed : d.currentTime;
 
-        /* ── Case 1: URL changed (new video or first load) ── */
+        /* Case 1: new URL → set up player for everyone */
         if (d.url !== currentVideoUrl) {
             setupPlayer(d.url, expectedTime, d.playing);
             return;
         }
 
-        /*
-         * Cases 2 & 3: Same URL.
-         * Skip if WE wrote this event (our local player is already in the right state).
-         */
+        /* Cases 2 & 3: same URL — skip our own echoes */
         if (d.by === me.id) return;
 
-        /* YouTube iframes can't be controlled via JS without the API;
-           they're synced at load time via ?start=. Skip further sync. */
+        /* YouTube iframes can't be JS-controlled; synced at load via ?start= */
         if (isYT) return;
 
         const vid = document.getElementById('mainVideo');
         if (!vid.src) return;
 
-        /* ── Apply remote state ── */
+        /* Apply remote state */
         isSyncing = true;
 
-        // Seek if we're more than 1.5 s out of sync
         if (Math.abs(vid.currentTime - expectedTime) > 1.5) {
             vid.currentTime = expectedTime;
         }
@@ -1184,7 +1154,6 @@ function listenVideo() {
         if (d.playing && vid.paused)   vid.play().catch(() => {});
         if (!d.playing && !vid.paused) vid.pause();
 
-        // Release the sync lock after the browser has processed the events
         setTimeout(() => { isSyncing = false; }, 600);
     });
 }
@@ -1245,7 +1214,6 @@ function leaveRoom() {
     document.getElementById('partList').innerHTML = '';
 }
 
-/* ─── Chat drawer ─── */
 function toggleChat() {
     document.getElementById('chatDrawer').classList.toggle('open');
     setTimeout(() => {
@@ -1254,12 +1222,10 @@ function toggleChat() {
     }, 420);
 }
 
-/* ─── Copy room code ─── */
 function copyCode() {
     navigator.clipboard?.writeText(me.roomId).then(() => toast('Room code copied! 📋'));
 }
 
-/* ─── Toast ─── */
 function toast(msg, ms = 2200) {
     const el = document.getElementById('toast');
     el.textContent = msg;
@@ -1267,14 +1233,12 @@ function toast(msg, ms = 2200) {
     setTimeout(() => el.classList.remove('show'), ms);
 }
 
-/* ─── Escape HTML ─── */
 function esc(t) {
     const d = document.createElement('div');
     d.appendChild(document.createTextNode(t));
     return d.innerHTML;
 }
 
-/* ─── Init ─── */
 buildAvatarGrid();
 </script>
 </body>
