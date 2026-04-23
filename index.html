@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-<title>WatchParty 🎬</title>
+<title>WatchParty by JAY</title>
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -54,7 +54,7 @@ button, input, input[type="range"], .video-wrap, video, iframe {
 }
 .brand h1 {
   font-size:26px; letter-spacing:-.5px;
-  background:linear-gradient(135deg,#fff 40%,rgba(255,255,255,.5));
+  background:linear-gradient(135deg,#ffe9a8 10%,#d4af37 45%,#fff2c6 85%);
   -webkit-background-clip:text; -webkit-text-fill-color:transparent;
 }
 .brand p { color:var(--muted); font-size:13px; margin-top:4px; }
@@ -429,10 +429,9 @@ button, input, input[type="range"], .video-wrap, video, iframe {
 
 .controls-row {
   display:flex; justify-content:center; align-items:center;
-  gap:12px; padding:10px 16px 14px; background:var(--bg);
+  gap:12px; padding:10px 16px; background:var(--bg);
   border-top:1px solid var(--border); flex-shrink:0; flex-wrap:wrap;
-  position:relative; z-index:60;
-  margin-bottom:10px;
+  z-index:3;
 }
 .ctrl {
   width:46px; height:46px; border-radius:50%; border:none;
@@ -445,13 +444,13 @@ button, input, input[type="range"], .video-wrap, video, iframe {
 .ctrl.leave { background:var(--red); }
 
 .chat-drawer {
-  position:fixed; bottom:74px; left:0; right:0;
+  position:fixed; bottom:0; left:0; right:0;
   background:rgba(13,13,22,.98); backdrop-filter:blur(20px);
   border-top:1px solid var(--border); border-radius:22px 22px 0 0;
   transition:height .4s cubic-bezier(.33,1,.68,1);
   height:56px; z-index:50; display:flex; flex-direction:column; overflow:hidden;
 }
-.chat-drawer.open { height:calc(52dvh - 74px); }
+.chat-drawer.open { height:52dvh; }
 .drawer-handle {
   height:56px; display:flex; align-items:center;
   padding:0 16px; cursor:pointer; flex-shrink:0; position:relative;
@@ -576,7 +575,7 @@ button, input, input[type="range"], .video-wrap, video, iframe {
 <div id="joinScreen" class="screen active">
   <div class="brand">
     <div class="brand-logo">🎬</div>
-    <h1>WatchParty</h1>
+    <h1>WatchParty by JAY</h1>
     <p>Watch anything together, in sync.</p>
   </div>
 
@@ -672,12 +671,6 @@ button, input, input[type="range"], .video-wrap, video, iframe {
   </div>
 
   <div class="controls-row">
-    <button id="micBtn" class="ctrl on" onclick="toggleMic()">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
-    </button>
-    <button id="camBtn" class="ctrl on" onclick="toggleCam()">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>
-    </button>
     <button class="ctrl leave" onclick="leaveRoom()">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
     </button>
@@ -727,8 +720,6 @@ const me = {
   name: '',
   avatar: '',
   roomId: '',
-  micOn: false,
-  camOn: true
 };
 
 let refs = {};
@@ -766,18 +757,6 @@ let lastCaptionIndex = -1;
 let captionEnabled = false;
 let captionSource = 'none';
 
-const VOICE_ICE_SERVERS = [
-  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
-  { urls: 'stun:stun.cloudflare.com:3478' }
-];
-let micStream = null;
-let micTrack = null;
-let silentAudioTrack = null;
-let silentAudioContext = null;
-let silentAudioNodes = null;
-let voicePeers = {};
-let voiceSyncReady = false;
-
 db.ref('.info/serverTimeOffset').on('value', snap => {
   serverOffset = snap.val() || 0;
 });
@@ -803,6 +782,123 @@ function fmt(s){
   return `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
 }
 function videoEl(){ return document.getElementById('mainVideo'); }
+
+function getPreferredCaptionLang(){
+  const raw = (navigator.language || 'en').toLowerCase();
+  return raw.split('-')[0] || 'en';
+}
+
+function normalizeCaptionTrack(track, idx){
+  const label = track?.label || track?.name || track?.language || track?.lang || `Track ${idx + 1}`;
+  const lang = track?.lang || track?.language || track?.languageCode || track?.srclang || track?.label || '';
+  return {
+    index: typeof track?.index === 'number' ? track.index : idx,
+    label,
+    lang: lang || '',
+    kind: track?.kind || track?.type || 'subtitle'
+  };
+}
+
+function dedupeCaptionTracks(tracks){
+  const seen = new Set();
+  return tracks.filter((track, idx) => {
+    const key = `${(track.label || '').toLowerCase()}|${(track.lang || '').toLowerCase()}|${(track.kind || '').toLowerCase()}`;
+    if(seen.has(key)) return false;
+    seen.add(key);
+    track.index = idx;
+    return true;
+  });
+}
+
+function captureYouTubeCaptionTracks(){
+  if(!ytPlayer || !ytReady) return [];
+  const tracks = [];
+
+  try {
+    const modules = ytPlayer.getOptions?.();
+    if(Array.isArray(modules) && modules.includes('captions')){
+      const optionNames = ['tracklist', 'tracks', 'availableTracks', 'captionTracks'];
+      for(const optionName of optionNames){
+        let candidate = null;
+        try { candidate = ytPlayer.getOption?.('captions', optionName); } catch(_) {}
+        if(Array.isArray(candidate) && candidate.length){
+          candidate.forEach((track, idx) => tracks.push(normalizeCaptionTrack(track, idx)));
+          break;
+        }
+      }
+    }
+  } catch(_) {}
+
+  if(!tracks.length){
+    const lang = getPreferredCaptionLang();
+    tracks.push({
+      index: 0,
+      label: 'Auto',
+      lang,
+      kind: 'captions'
+    });
+  }
+
+  return dedupeCaptionTracks(tracks);
+}
+
+function refreshCaptionStateFromCurrentSource(forceEnable = null){
+  if(currentType === 'youtube'){
+    const tracks = captureYouTubeCaptionTracks();
+    captionSource = 'youtube';
+    captionTracks = tracks;
+    if(forceEnable === true) captionEnabled = true;
+    if(forceEnable === false) captionEnabled = false;
+    if(captionEnabled && selectedCaptionIndex < 0 && captionTracks.length){
+      selectedCaptionIndex = 0;
+      lastCaptionIndex = 0;
+    }
+    renderCaptionPanel();
+    return;
+  }
+
+  syncCaptionTracksFromSource();
+}
+
+function setYouTubeCaptionsEnabled(enable, preferredIndex = selectedCaptionIndex){
+  if(!ytPlayer || !ytReady){
+    captionEnabled = !!enable;
+    renderCaptionPanel();
+    return;
+  }
+
+  const selected = captionTracks.find(t => t.index === preferredIndex) || captionTracks[0] || null;
+  const targetLang = selected?.lang || getPreferredCaptionLang();
+  const snapshot = {
+    type: 'youtube',
+    url: currentUrl,
+    videoId: currentVideoId,
+    socialKind: currentSocialKind,
+    playing: isPlaying(),
+    currentTime: getCurrentTime(),
+    volume: getVolume()
+  };
+
+  captionEnabled = !!enable;
+  if(enable){
+    if(typeof preferredIndex === 'number' && preferredIndex >= 0){
+      selectedCaptionIndex = preferredIndex;
+      lastCaptionIndex = preferredIndex;
+    } else if(captionTracks.length){
+      selectedCaptionIndex = captionTracks[0].index;
+      lastCaptionIndex = selectedCaptionIndex;
+    }
+  } else {
+    selectedCaptionIndex = -1;
+  }
+
+  try { ytPlayer.destroy(); } catch(_) {}
+  ytPlayer = null;
+  ytReady = false;
+  pendingYTApply = snapshot;
+  createOrResetYT(snapshot.videoId, snapshot.currentTime || 0, snapshot.playing, captionEnabled, targetLang);
+  renderCaptionPanel();
+}
 
 function setVisiblePlayer(type){
   const v = document.getElementById('mainVideo');
@@ -1003,7 +1099,7 @@ function ensureYouTubeApi(){
   return ytApiPromise;
 }
 
-function createOrResetYT(videoId, startAt = 0, autoplay = false){
+function createOrResetYT(videoId, startAt = 0, autoplay = false, captionOn = captionEnabled, preferredCaptionLang = null){
   ensureYouTubeApi().then(()=>{
     setVisiblePlayer('youtube');
     document.getElementById('videoEmpty').classList.add('hidden');
@@ -1021,8 +1117,8 @@ function createOrResetYT(videoId, startAt = 0, autoplay = false){
           playsinline:1,
           disablekb:1,
           iv_load_policy:3,
-          cc_load_policy:1,
-          cc_lang_pref:(navigator.language || 'en').slice(0,2),
+          cc_load_policy:captionOn ? 1 : 0,
+          cc_lang_pref:preferredCaptionLang || getPreferredCaptionLang(),
           hl:(navigator.language || 'en').slice(0,2),
           origin:location.origin,
           enablejsapi:1
@@ -1030,7 +1126,7 @@ function createOrResetYT(videoId, startAt = 0, autoplay = false){
         events:{
           onReady:()=>{
             ytReady = true;
-            syncYouTubeCaptions(true);
+            refreshCaptionStateFromCurrentSource();
             if(pendingYTApply){
               const s = pendingYTApply;
               pendingYTApply = null;
@@ -1042,7 +1138,7 @@ function createOrResetYT(videoId, startAt = 0, autoplay = false){
             syncUiFromPlayer();
           },
           onApiChange:()=>{
-            syncYouTubeCaptions(true);
+            refreshCaptionStateFromCurrentSource();
           },
           onStateChange:(e)=>{
             if(isApplyingRemote) return;
@@ -1101,11 +1197,10 @@ function applyYTState(state){
 
 function syncYouTubeCaptions(silent = false){
   if(currentType !== 'youtube' || !ytPlayer || !ytReady) return;
-
-  let moduleAvailable = false;
+  refreshCaptionStateFromCurrentSource();
   try {
     const modules = ytPlayer.getOptions?.();
-    moduleAvailable = Array.isArray(modules) && modules.includes('captions');
+    const moduleAvailable = Array.isArray(modules) && modules.includes('captions');
     if(moduleAvailable){
       const options = ytPlayer.getOptions('captions') || [];
       if(options.includes('fontSize')) ytPlayer.setOption('captions', 'fontSize', 0);
@@ -1113,16 +1208,18 @@ function syncYouTubeCaptions(silent = false){
     }
   } catch(_) {}
 
-  ytCaptionModuleReady = moduleAvailable;
-  captionTracks = [];
-  captionSource = 'youtube';
-  captionEnabled = true;
-  selectedCaptionIndex = 0;
-  lastCaptionIndex = 0;
-  renderCaptionPanel();
+  if(captionEnabled && captionTracks.length){
+    const lang = (captionTracks.find(t => t.index === selectedCaptionIndex) || captionTracks[0] || {}).lang || getPreferredCaptionLang();
+    try {
+      ytPlayer.loadModule?.('captions');
+    } catch(_) {}
+    if(lang){
+      try { ytPlayer.setOption('captions', 'cc_lang_pref', lang); } catch(_) {}
+    }
+  }
 
   if(!silent){
-    toast(moduleAvailable ? 'YouTube captions refreshed' : 'YouTube captions are controlled inside the player');
+    toast(captionEnabled ? 'Captions on' : 'Captions off');
   }
 }
 
@@ -1229,25 +1326,48 @@ function renderCaptionPanel(){
   if(!list || !toggleBtn || !status) return;
 
   if(currentType === 'youtube'){
-    list.innerHTML = `
-      <div class="caption-item active">
+    const tracks = captionTracks.length ? captionTracks : captureYouTubeCaptionTracks();
+    const active = tracks.find(t => t.index === selectedCaptionIndex) || tracks[0] || null;
+
+    list.innerHTML = '';
+    const offBtn = document.createElement('button');
+    offBtn.className = `caption-item ${!captionEnabled ? 'active' : ''}`;
+    offBtn.innerHTML = `
+      <div class="left">
+        <div class="label">Off</div>
+        <div class="meta">Disable captions</div>
+      </div>
+      <div class="caption-chip">No CC</div>
+    `;
+    offBtn.onclick = ()=>toggleCaptionsEnabled();
+    list.appendChild(offBtn);
+
+    tracks.forEach((track, idx)=>{
+      const item = document.createElement('button');
+      const isActive = captionEnabled && active && active.index === track.index;
+      item.className = `caption-item ${isActive ? 'active' : ''}`;
+      item.innerHTML = `
         <div class="left">
-          <div class="label">YouTube captions</div>
-          <div class="meta">${ytCaptionModuleReady ? 'Caption module detected in the player' : 'Shown by the embedded player when available'}</div>
+          <div class="label">${esc(track.label || `Track ${idx + 1}`)}</div>
+          <div class="meta">${esc(track.lang ? `Language: ${track.lang}` : 'Language not exposed by player')}</div>
         </div>
-        <div class="caption-chip">${ytCaptionModuleReady ? 'Ready' : 'Auto'}</div>
-      </div>`;
-    toggleBtn.textContent = 'Refresh';
-    toggleBtn.className = 'caption-toggle on';
-    status.textContent = ytCaptionModuleReady
-      ? 'YouTube captions are available in the embedded player'
-      : 'YouTube captions are handled inside the player and may appear when the video provides them';
+        <div class="caption-chip">${isActive ? 'On' : 'Select'}</div>
+      `;
+      item.onclick = ()=>selectCaptionTrack(track.index);
+      list.appendChild(item);
+    });
+
+    toggleBtn.textContent = captionEnabled ? 'On' : 'Off';
+    toggleBtn.className = `caption-toggle ${captionEnabled ? 'on' : 'off'}`;
+    status.textContent = captionEnabled
+      ? `Showing ${active ? (active.label || 'captions') : 'captions'}`
+      : 'Choose a caption language or turn captions on';
     return;
   }
 
   if(currentType === 'tiktok' || currentType === 'instagram'){
     list.innerHTML = `<div style="padding:10px 2px;color:var(--muted);font-size:12px;line-height:1.4;">${currentType === 'tiktok' ? 'TikTok' : 'Instagram'} embeds do not expose caption tracks to this page. Use the platform player captions if the post provides them.</div>`;
-    toggleBtn.textContent = 'N/A';
+    toggleBtn.textContent = 'Off';
     toggleBtn.className = 'caption-toggle off';
     status.textContent = 'Captions are not exposed by this embed';
     return;
@@ -1307,7 +1427,7 @@ function renderCaptionPanel(){
 
 function syncCaptionTracksFromSource(){
   if(currentType === 'youtube'){
-    syncYouTubeCaptions(true);
+    refreshCaptionStateFromCurrentSource();
     return;
   }
 
@@ -1391,7 +1511,18 @@ function applyCaptionSelectionToSource(index, silent = false){
 
 function selectCaptionTrack(index){
   if(currentType === 'youtube'){
-    syncYouTubeCaptions(false);
+    if(index < 0){
+      setYouTubeCaptionsEnabled(false);
+      return;
+    }
+    const track = captionTracks.find(t => t.index === index) || captionTracks[index] || null;
+    if(!track){
+      toast('No captions available in this video.');
+      return;
+    }
+    selectedCaptionIndex = track.index;
+    lastCaptionIndex = track.index;
+    setYouTubeCaptionsEnabled(true, track.index);
     return;
   }
 
@@ -1413,7 +1544,7 @@ function selectCaptionTrack(index){
 
 function toggleCaptionsEnabled(){
   if(currentType === 'youtube'){
-    syncYouTubeCaptions(false);
+    setYouTubeCaptionsEnabled(!captionEnabled, captionEnabled ? selectedCaptionIndex : (lastCaptionIndex >= 0 ? lastCaptionIndex : 0));
     return;
   }
 
@@ -1551,40 +1682,27 @@ async function enterRoom(){
   refs.users = db.ref(`rooms/${me.roomId}/users`);
   refs.messages = db.ref(`rooms/${me.roomId}/messages`);
   refs.typing = db.ref(`rooms/${me.roomId}/typing`);
-  refs.voice = db.ref(`rooms/${me.roomId}/voice`);
   refs.me = refs.users.child(me.id);
   refs.myTyping = refs.typing.child(me.id);
-  refs.meVoice = refs.voice.child(me.id);
 
   await refs.me.set({
     name: me.name,
     avatar: me.avatar,
     joinedAt: firebase.database.ServerValue.TIMESTAMP
   });
-  await refs.meVoice.set({
-    joinedAt: firebase.database.ServerValue.TIMESTAMP
-  });
   refs.me.onDisconnect().remove();
   refs.myTyping.onDisconnect().remove();
-  refs.meVoice.onDisconnect().remove();
 
   document.getElementById('joinScreen').classList.remove('active');
   document.getElementById('roomScreen').classList.add('active');
   document.getElementById('roomCodeDisplay').textContent = me.roomId;
   document.getElementById('syncStateLabel').textContent = 'Connected';
   document.getElementById('volumeBar').value = '100';
-  me.micOn = false;
-  updateMicButtonUI();
-
-  await ensureSilentAudioTrack();
-
-  voiceSyncReady = true;
 
   listenUsers();
   listenMessages();
   listenTyping();
   listenPlayer();
-  syncVoicePeers();
   startSyncLoop();
 }
 
@@ -1595,7 +1713,6 @@ function leaveRoom(){
   clearInterval(syncTimer);
 
   Object.values(refs).forEach(r => r?.off?.());
-  cleanupVoiceSystem();
   refs = {};
   parts = {};
   currentState = null;
@@ -1669,7 +1786,6 @@ function listenUsers(){
     const n = Object.keys(parts).length;
     document.getElementById('watchCount').textContent = String(n);
     document.getElementById('onlineBadge').textContent = `${n} online`;
-    syncVoicePeers();
   });
 }
 
@@ -1881,7 +1997,7 @@ function loadStateIntoUI(state){
 
   if(state.type === 'youtube'){
     if(!ytPlayer || !ytReady || currentVideoId !== state.videoId){
-      createOrResetYT(state.videoId, getLiveTargetTime(state), !!state.playing);
+      createOrResetYT(state.videoId, getLiveTargetTime(state), !!state.playing, captionEnabled, getPreferredCaptionLang());
       pendingYTApply = state;
     } else {
       applyYTState(state);
@@ -2018,7 +2134,7 @@ function loadVideo(){
     loadDirectVideo(parsed.url, 0, true);
   } else if(parsed.type === 'youtube'){
     resetCaptionUI();
-    createOrResetYT(parsed.videoId, parsed.startAt || 0, true);
+    createOrResetYT(parsed.videoId, parsed.startAt || 0, true, true, getPreferredCaptionLang());
   } else if(parsed.type === 'tiktok'){
     resetCaptionUI();
     loadTikTokFrame(parsed.videoId, true);
@@ -2156,327 +2272,14 @@ document.getElementById('volumeBar').addEventListener('input', function(){
   setLocalVolume(this.value);
 });
 
-
-function updateMicButtonUI(){
+function toggleMic(){
+  me.micOn = !me.micOn;
   const b = document.getElementById('micBtn');
-  if(!b) return;
   b.className = `ctrl ${me.micOn ? 'on' : 'off'}`;
-  b.title = me.micOn ? 'Mic on' : 'Mic off';
   b.innerHTML = me.micOn
     ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>`
     : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V5a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="22"/></svg>`;
 }
-
-function voiceSignalRef(peerId, type, fromId){
-  return db.ref(`rooms/${me.roomId}/voice/${peerId}/${type}From/${fromId}`);
-}
-
-function voiceCandidateListRef(peerId, fromId){
-  return db.ref(`rooms/${me.roomId}/voice/${peerId}/candidatesFrom/${fromId}`);
-}
-
-async function ensureSilentAudioTrack(){
-  if(silentAudioTrack && silentAudioTrack.readyState !== 'ended') return silentAudioTrack;
-  try{
-    const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    if(!AudioCtx) return null;
-    silentAudioContext = silentAudioContext || new AudioCtx();
-    if(silentAudioContext.state === 'suspended'){
-      try { await silentAudioContext.resume(); } catch(_) {}
-    }
-    const gain = silentAudioContext.createGain();
-    gain.gain.value = 0;
-    const osc = silentAudioContext.createOscillator();
-    const dest = silentAudioContext.createMediaStreamDestination();
-    osc.connect(gain).connect(dest);
-    osc.start();
-    silentAudioNodes = { osc, gain, dest };
-    silentAudioTrack = dest.stream.getAudioTracks()[0] || null;
-    if(silentAudioTrack) silentAudioTrack.enabled = true;
-    return silentAudioTrack;
-  } catch(err){
-    return null;
-  }
-}
-
-function getOutboundAudioTrack(){
-  if(me.micOn && micTrack && micTrack.readyState !== 'ended') return micTrack;
-  return silentAudioTrack || null;
-}
-
-function ensurePeerAudioSender(peer){
-  if(!peer?.pc || peer.audioSender) return peer?.audioSender || null;
-  const track = getOutboundAudioTrack();
-
-  try {
-    if(peer.pc.addTransceiver){
-      const transceiver = peer.pc.addTransceiver('audio', { direction:'sendrecv' });
-      peer.audioSender = transceiver?.sender || null;
-    }
-  } catch(_) {}
-
-  if(!peer.audioSender && track && peer.pc.addTrack){
-    try {
-      peer.audioSender = peer.pc.addTrack(track, micStream || new MediaStream([track]));
-    } catch(_) {}
-  }
-
-  return peer.audioSender || null;
-}
-
-async function ensureMicStream(){
-  if(micStream && micTrack && micTrack.readyState !== 'ended') return micStream;
-  if(!navigator.mediaDevices?.getUserMedia){
-    throw new Error('Microphone access is not supported in this browser.');
-  }
-  micStream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-      channelCount: 1
-    },
-    video: false
-  });
-  micTrack = micStream.getAudioTracks()[0] || null;
-  if(micTrack) micTrack.enabled = true;
-  return micStream;
-}
-
-function setOutgoingTrackForPeer(peer){
-  if(!peer?.pc) return;
-  const track = getOutboundAudioTrack();
-  if(!peer.audioSender) ensurePeerAudioSender(peer);
-  if(!peer.audioSender) return;
-
-  try {
-    peer.audioSender.replaceTrack(track || null);
-  } catch(_) {
-    try {
-      peer.audioSender = null;
-      ensurePeerAudioSender(peer);
-      if(peer.audioSender) peer.audioSender.replaceTrack(track || null);
-    } catch(_) {}
-  }
-}
-
-function setOutgoingTrackForAllPeers(){
-  Object.values(voicePeers).forEach(setOutgoingTrackForPeer);
-}
-
-function cleanupVoicePeer(peerId){
-  const peer = voicePeers[peerId];
-  if(!peer) return;
-  try { peer.offerRef?.off(); } catch(_) {}
-  try { peer.answerRef?.off(); } catch(_) {}
-  try { peer.candidateRef?.off(); } catch(_) {}
-  try { peer.pc?.close(); } catch(_) {}
-  try { peer.audioEl?.pause(); } catch(_) {}
-  try { peer.audioEl?.remove(); } catch(_) {}
-  delete voicePeers[peerId];
-}
-
-function cleanupVoiceSystem(){
-  Object.keys(voicePeers).forEach(cleanupVoicePeer);
-  if(micStream){
-    micStream.getTracks().forEach(t => t.stop());
-  }
-  micStream = null;
-  micTrack = null;
-  if(silentAudioNodes?.osc){
-    try { silentAudioNodes.osc.stop(); } catch(_) {}
-  }
-  silentAudioNodes = null;
-  silentAudioTrack = null;
-  if(silentAudioContext){
-    try { silentAudioContext.close(); } catch(_) {}
-  }
-  silentAudioContext = null;
-  voicePeers = {};
-  voiceSyncReady = false;
-}
-
-function ensureVoicePeer(peerId){
-  if(peerId === me.id) return null;
-  let peer = voicePeers[peerId];
-  if(peer) return peer;
-
-  const isInitiator = String(me.id) < String(peerId);
-  const pc = new RTCPeerConnection({ iceServers: VOICE_ICE_SERVERS });
-  peer = voicePeers[peerId] = {
-    peerId,
-    isInitiator,
-    pc,
-    audioSender: null,
-    audioEl: null,
-    offerSent: false,
-    hasAppliedOffer: false,
-    offerRef: voiceSignalRef(me.id, 'offer', peerId),
-    answerRef: voiceSignalRef(me.id, 'answer', peerId),
-    candidateRef: voiceCandidateListRef(me.id, peerId),
-    remoteCandidatePushRef: voiceCandidateListRef(peerId, me.id)
-  };
-
-  const audio = document.createElement('audio');
-  audio.autoplay = true;
-  audio.playsInline = true;
-  audio.muted = false;
-  audio.volume = 1;
-  audio.hidden = true;
-  audio.dataset.peer = peerId;
-  document.body.appendChild(audio);
-  peer.audioEl = audio;
-
-  pc.ontrack = (event) => {
-    if(!audio.srcObject){
-      audio.srcObject = new MediaStream();
-    }
-    const target = audio.srcObject;
-    event.streams.forEach(stream => {
-      stream.getTracks().forEach(track => {
-        const existing = target.getTracks().find(t => t.id === track.id);
-        if(!existing) target.addTrack(track);
-      });
-    });
-    audio.play().catch(() => {
-      const tryPlay = () => {
-        audio.play().catch(() => {});
-        document.removeEventListener('pointerdown', tryPlay);
-        document.removeEventListener('keydown', tryPlay);
-      };
-      document.addEventListener('pointerdown', tryPlay, { once:true });
-      document.addEventListener('keydown', tryPlay, { once:true });
-    });
-  };
-
-  pc.onicecandidate = (event) => {
-    if(!event.candidate) return;
-    peer.remoteCandidatePushRef.push({
-      candidate: event.candidate.candidate,
-      sdpMid: event.candidate.sdpMid,
-      sdpMLineIndex: event.candidate.sdpMLineIndex,
-      usernameFragment: event.candidate.usernameFragment || null,
-      ts: firebase.database.ServerValue.TIMESTAMP
-    });
-  };
-
-  pc.onconnectionstatechange = () => {
-    if(['failed', 'disconnected', 'closed'].includes(pc.connectionState)){
-      cleanupVoicePeer(peerId);
-      return;
-    }
-  };
-
-  ensurePeerAudioSender(peer);
-  setOutgoingTrackForPeer(peer);
-
-  peer.candidateRef.on('child_added', async snap => {
-    const cand = snap.val();
-    if(!cand) return;
-    try {
-      await pc.addIceCandidate(new RTCIceCandidate(cand));
-    } catch(_) {}
-  });
-
-  if(peer.isInitiator){
-    peer.answerRef.on('value', async snap => {
-      const answer = snap.val();
-      if(!answer || !answer.type) return;
-      try {
-        if(!pc.currentRemoteDescription || pc.currentRemoteDescription.sdp !== answer.sdp){
-          await pc.setRemoteDescription(new RTCSessionDescription(answer));
-          if(peer.offerSent) toast('Voice connected');
-        }
-      } catch(err) {
-        console.warn('Answer apply failed', err);
-      }
-    });
-  } else {
-    peer.offerRef.on('value', async snap => {
-      const offer = snap.val();
-      if(!offer || !offer.type) return;
-      try {
-        if(peer.hasAppliedOffer && pc.currentRemoteDescription?.sdp === offer.sdp) return;
-        peer.hasAppliedOffer = true;
-        await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        ensurePeerAudioSender(peer);
-        setOutgoingTrackForPeer(peer);
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        await voiceSignalRef(peerId, 'answer', me.id).set(pc.localDescription.toJSON ? pc.localDescription.toJSON() : pc.localDescription);
-      } catch(err) {
-        console.warn('Offer apply failed', err);
-      }
-    });
-  }
-
-  return peer;
-}
-
-async function startVoicePeer(peerId){
-  const peer = ensureVoicePeer(peerId);
-  if(!peer || !peer.isInitiator || peer.offerSent) return;
-  try {
-    ensurePeerAudioSender(peer);
-    setOutgoingTrackForPeer(peer);
-    const offer = await peer.pc.createOffer();
-    await peer.pc.setLocalDescription(offer);
-    await peer.offerRef.set(peer.pc.localDescription.toJSON ? peer.pc.localDescription.toJSON() : peer.pc.localDescription);
-    peer.offerSent = true;
-  } catch(err){
-    console.warn('Offer create failed', err);
-  }
-}
-
-function syncVoicePeers(){
-  if(!voiceSyncReady) return;
-  const activeIds = Object.keys(parts || {}).filter(uid => uid !== me.id);
-  activeIds.forEach(uid => {
-    const peer = ensureVoicePeer(uid);
-    ensurePeerAudioSender(peer);
-  });
-  Object.keys(voicePeers).forEach(uid => {
-    if(!parts[uid]) cleanupVoicePeer(uid);
-  });
-  activeIds.forEach(uid => {
-    const peer = voicePeers[uid];
-    if(peer?.isInitiator){
-      startVoicePeer(uid);
-    }
-  });
-}
-
-async function toggleMic(){
-  try {
-    if(me.micOn){
-      me.micOn = false;
-      if(micTrack) micTrack.enabled = false;
-      await ensureSilentAudioTrack();
-      setOutgoingTrackForAllPeers();
-      updateMicButtonUI();
-      toast('Mic muted');
-      return;
-    }
-
-    await ensureSilentAudioTrack();
-    await ensureMicStream();
-    if(!micTrack){
-      throw new Error('No microphone track available.');
-    }
-    micTrack.enabled = true;
-    me.micOn = true;
-    Object.values(voicePeers).forEach(peer => ensurePeerAudioSender(peer));
-    setOutgoingTrackForAllPeers();
-    updateMicButtonUI();
-    toast('Mic connected');
-  } catch(err){
-    me.micOn = false;
-    if(micTrack) micTrack.enabled = false;
-    updateMicButtonUI();
-    toast(err?.message || 'Microphone permission denied');
-  }
-}
-
 function toggleCam(){
   me.camOn = !me.camOn;
   const b = document.getElementById('camBtn');
