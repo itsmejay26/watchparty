@@ -726,7 +726,7 @@ const me = {
   name: '',
   avatar: '',
   roomId: '',
-  micOn: true,
+  micOn: false,
   camOn: true
 };
 
@@ -764,6 +764,18 @@ let selectedCaptionIndex = -1;
 let lastCaptionIndex = -1;
 let captionEnabled = false;
 let captionSource = 'none';
+
+const VOICE_ICE_SERVERS = [
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+  { urls: 'stun:stun.cloudflare.com:3478' }
+];
+let micStream = null;
+let micTrack = null;
+let silentAudioTrack = null;
+let silentAudioContext = null;
+let silentAudioNodes = null;
+let voicePeers = {};
+let voiceSyncReady = false;
 
 db.ref('.info/serverTimeOffset').on('value', snap => {
   serverOffset = snap.val() || 0;
@@ -1538,27 +1550,37 @@ async function enterRoom(){
   refs.users = db.ref(`rooms/${me.roomId}/users`);
   refs.messages = db.ref(`rooms/${me.roomId}/messages`);
   refs.typing = db.ref(`rooms/${me.roomId}/typing`);
+  refs.voice = db.ref(`rooms/${me.roomId}/voice`);
   refs.me = refs.users.child(me.id);
   refs.myTyping = refs.typing.child(me.id);
+  refs.meVoice = refs.voice.child(me.id);
 
   await refs.me.set({
     name: me.name,
     avatar: me.avatar,
     joinedAt: firebase.database.ServerValue.TIMESTAMP
   });
+  await refs.meVoice.set({
+    joinedAt: firebase.database.ServerValue.TIMESTAMP
+  });
   refs.me.onDisconnect().remove();
   refs.myTyping.onDisconnect().remove();
+  refs.meVoice.onDisconnect().remove();
 
   document.getElementById('joinScreen').classList.remove('active');
   document.getElementById('roomScreen').classList.add('active');
   document.getElementById('roomCodeDisplay').textContent = me.roomId;
   document.getElementById('syncStateLabel').textContent = 'Connected';
   document.getElementById('volumeBar').value = '100';
+  me.micOn = false;
+  updateMicButtonUI();
+  voiceSyncReady = true;
 
   listenUsers();
   listenMessages();
   listenTyping();
   listenPlayer();
+  syncVoicePeers();
   startSyncLoop();
 }
 
@@ -1569,6 +1591,7 @@ function leaveRoom(){
   clearInterval(syncTimer);
 
   Object.values(refs).forEach(r => r?.off?.());
+  cleanupVoiceSystem();
   refs = {};
   parts = {};
   currentState = null;
@@ -1642,6 +1665,7 @@ function listenUsers(){
     const n = Object.keys(parts).length;
     document.getElementById('watchCount').textContent = String(n);
     document.getElementById('onlineBadge').textContent = `${n} online`;
+    syncVoicePeers();
   });
 }
 
@@ -2128,14 +2152,290 @@ document.getElementById('volumeBar').addEventListener('input', function(){
   setLocalVolume(this.value);
 });
 
-function toggleMic(){
-  me.micOn = !me.micOn;
+
+function updateMicButtonUI(){
   const b = document.getElementById('micBtn');
+  if(!b) return;
   b.className = `ctrl ${me.micOn ? 'on' : 'off'}`;
+  b.title = me.micOn ? 'Mic on' : 'Mic off';
   b.innerHTML = me.micOn
     ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>`
     : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V5a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="22"/></svg>`;
 }
+
+function voiceSignalRef(peerId, type, fromId){
+  return db.ref(`rooms/${me.roomId}/voice/${peerId}/${type}From/${fromId}`);
+}
+
+function voiceCandidateListRef(peerId, fromId){
+  return db.ref(`rooms/${me.roomId}/voice/${peerId}/candidatesFrom/${fromId}`);
+}
+
+async function ensureSilentAudioTrack(){
+  if(silentAudioTrack && silentAudioTrack.readyState !== 'ended') return silentAudioTrack;
+  try{
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if(!AudioCtx) return null;
+    silentAudioContext = silentAudioContext || new AudioCtx();
+    if(silentAudioContext.state === 'suspended'){
+      try { await silentAudioContext.resume(); } catch(_) {}
+    }
+    const gain = silentAudioContext.createGain();
+    gain.gain.value = 0;
+    const osc = silentAudioContext.createOscillator();
+    const dest = silentAudioContext.createMediaStreamDestination();
+    osc.connect(gain).connect(dest);
+    osc.start();
+    silentAudioNodes = { osc, gain, dest };
+    silentAudioTrack = dest.stream.getAudioTracks()[0] || null;
+    if(silentAudioTrack) silentAudioTrack.enabled = true;
+    return silentAudioTrack;
+  } catch(err){
+    return null;
+  }
+}
+
+function getOutboundAudioTrack(){
+  if(me.micOn && micTrack && micTrack.readyState !== 'ended') return micTrack;
+  return silentAudioTrack || null;
+}
+
+async function ensureMicStream(){
+  if(micStream && micTrack && micTrack.readyState !== 'ended') return micStream;
+  if(!navigator.mediaDevices?.getUserMedia){
+    throw new Error('Microphone access is not supported in this browser.');
+  }
+  micStream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      channelCount: 1
+    },
+    video: false
+  });
+  micTrack = micStream.getAudioTracks()[0] || null;
+  if(micTrack) micTrack.enabled = true;
+  return micStream;
+}
+
+function setOutgoingTrackForPeer(peer){
+  if(!peer?.pc || !peer.audioSender) return;
+  const track = getOutboundAudioTrack();
+  try {
+    peer.audioSender.replaceTrack(track || null);
+  } catch(_) {}
+}
+
+function setOutgoingTrackForAllPeers(){
+  Object.values(voicePeers).forEach(setOutgoingTrackForPeer);
+}
+
+function cleanupVoicePeer(peerId){
+  const peer = voicePeers[peerId];
+  if(!peer) return;
+  try { peer.offerRef?.off(); } catch(_) {}
+  try { peer.answerRef?.off(); } catch(_) {}
+  try { peer.candidateRef?.off(); } catch(_) {}
+  try { peer.pc?.close(); } catch(_) {}
+  try { peer.audioEl?.pause(); } catch(_) {}
+  try { peer.audioEl?.remove(); } catch(_) {}
+  delete voicePeers[peerId];
+}
+
+function cleanupVoiceSystem(){
+  Object.keys(voicePeers).forEach(cleanupVoicePeer);
+  if(micStream){
+    micStream.getTracks().forEach(t => t.stop());
+  }
+  micStream = null;
+  micTrack = null;
+  if(silentAudioNodes?.osc){
+    try { silentAudioNodes.osc.stop(); } catch(_) {}
+  }
+  silentAudioNodes = null;
+  silentAudioTrack = null;
+  if(silentAudioContext){
+    try { silentAudioContext.close(); } catch(_) {}
+  }
+  silentAudioContext = null;
+  voicePeers = {};
+  voiceSyncReady = false;
+}
+
+function ensureVoicePeer(peerId){
+  if(peerId === me.id) return null;
+  let peer = voicePeers[peerId];
+  if(peer) return peer;
+
+  const isInitiator = String(me.id) < String(peerId);
+  const pc = new RTCPeerConnection({ iceServers: VOICE_ICE_SERVERS });
+  peer = voicePeers[peerId] = {
+    peerId,
+    isInitiator,
+    pc,
+    audioSender: null,
+    audioEl: null,
+    offerSent: false,
+    hasAppliedOffer: false,
+    offerRef: voiceSignalRef(me.id, 'offer', peerId),
+    answerRef: voiceSignalRef(me.id, 'answer', peerId),
+    candidateRef: voiceCandidateListRef(me.id, peerId),
+    remoteCandidatePushRef: voiceCandidateListRef(peerId, me.id)
+  };
+
+  const audio = document.createElement('audio');
+  audio.autoplay = true;
+  audio.playsInline = true;
+  audio.hidden = true;
+  audio.dataset.peer = peerId;
+  document.body.appendChild(audio);
+  peer.audioEl = audio;
+
+  pc.ontrack = (event) => {
+    if(!audio.srcObject){
+      audio.srcObject = new MediaStream();
+    }
+    const target = audio.srcObject;
+    event.streams.forEach(stream => {
+      stream.getTracks().forEach(track => {
+        const existing = target.getTracks().find(t => t.id === track.id);
+        if(!existing) target.addTrack(track);
+      });
+    });
+    audio.play().catch(()=>{});
+  };
+
+  pc.onicecandidate = (event) => {
+    if(!event.candidate) return;
+    peer.remoteCandidatePushRef.push({
+      candidate: event.candidate.candidate,
+      sdpMid: event.candidate.sdpMid,
+      sdpMLineIndex: event.candidate.sdpMLineIndex,
+      usernameFragment: event.candidate.usernameFragment || null,
+      ts: firebase.database.ServerValue.TIMESTAMP
+    });
+  };
+
+  pc.onconnectionstatechange = () => {
+    if(['failed', 'disconnected', 'closed'].includes(pc.connectionState)){
+      cleanupVoicePeer(peerId);
+      return;
+    }
+  };
+
+  try {
+    peer.audioSender = pc.addTransceiver('audio', { direction: 'sendrecv' }).sender;
+  } catch(_) {
+    try {
+      const tempTrack = getOutboundAudioTrack();
+      if(tempTrack) peer.audioSender = pc.addTrack(tempTrack, micStream || new MediaStream([tempTrack]));
+    } catch(_) {}
+  }
+
+  setOutgoingTrackForPeer(peer);
+
+  peer.candidateRef.on('child_added', async snap => {
+    const cand = snap.val();
+    if(!cand) return;
+    try {
+      await pc.addIceCandidate(new RTCIceCandidate(cand));
+    } catch(_) {}
+  });
+
+  if(peer.isInitiator){
+    peer.answerRef.on('value', async snap => {
+      const answer = snap.val();
+      if(!answer || !answer.type) return;
+      try {
+        if(!pc.currentRemoteDescription || pc.currentRemoteDescription.sdp !== answer.sdp){
+          await pc.setRemoteDescription(new RTCSessionDescription(answer));
+          if(peer.offerSent) toast('Voice connected');
+        }
+      } catch(err) {
+        console.warn('Answer apply failed', err);
+      }
+    });
+  } else {
+    peer.offerRef.on('value', async snap => {
+      const offer = snap.val();
+      if(!offer || !offer.type) return;
+      try {
+        if(peer.hasAppliedOffer && pc.currentRemoteDescription?.sdp === offer.sdp) return;
+        peer.hasAppliedOffer = true;
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        setOutgoingTrackForPeer(peer);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        await voiceSignalRef(peerId, 'answer', me.id).set(pc.localDescription.toJSON ? pc.localDescription.toJSON() : pc.localDescription);
+      } catch(err) {
+        console.warn('Offer apply failed', err);
+      }
+    });
+  }
+
+  return peer;
+}
+
+async function startVoicePeer(peerId){
+  const peer = ensureVoicePeer(peerId);
+  if(!peer || !peer.isInitiator || peer.offerSent) return;
+  try {
+    setOutgoingTrackForPeer(peer);
+    const offer = await peer.pc.createOffer();
+    await peer.pc.setLocalDescription(offer);
+    await peer.offerRef.set(peer.pc.localDescription.toJSON ? peer.pc.localDescription.toJSON() : peer.pc.localDescription);
+    peer.offerSent = true;
+  } catch(err){
+    console.warn('Offer create failed', err);
+  }
+}
+
+function syncVoicePeers(){
+  if(!voiceSyncReady) return;
+  const activeIds = Object.keys(parts || {}).filter(uid => uid !== me.id);
+  activeIds.forEach(uid => ensureVoicePeer(uid));
+  Object.keys(voicePeers).forEach(uid => {
+    if(!parts[uid]) cleanupVoicePeer(uid);
+  });
+  activeIds.forEach(uid => {
+    const peer = voicePeers[uid];
+    if(peer?.isInitiator){
+      startVoicePeer(uid);
+    }
+  });
+}
+
+async function toggleMic(){
+  try {
+    if(me.micOn){
+      me.micOn = false;
+      if(micTrack) micTrack.enabled = false;
+      await ensureSilentAudioTrack();
+      setOutgoingTrackForAllPeers();
+      updateMicButtonUI();
+      toast('Mic muted');
+      return;
+    }
+
+    await ensureSilentAudioTrack();
+    await ensureMicStream();
+    if(!micTrack){
+      throw new Error('No microphone track available.');
+    }
+    micTrack.enabled = true;
+    me.micOn = true;
+    setOutgoingTrackForAllPeers();
+    updateMicButtonUI();
+    toast('Mic connected');
+  } catch(err){
+    me.micOn = false;
+    if(micTrack) micTrack.enabled = false;
+    updateMicButtonUI();
+    toast(err?.message || 'Microphone permission denied');
+  }
+}
+
 function toggleCam(){
   me.camOn = !me.camOn;
   const b = document.getElementById('camBtn');
