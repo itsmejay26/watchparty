@@ -429,9 +429,10 @@ button, input, input[type="range"], .video-wrap, video, iframe {
 
 .controls-row {
   display:flex; justify-content:center; align-items:center;
-  gap:12px; padding:10px 16px; background:var(--bg);
+  gap:12px; padding:10px 16px 14px; background:var(--bg);
   border-top:1px solid var(--border); flex-shrink:0; flex-wrap:wrap;
-  z-index:3;
+  position:relative; z-index:60;
+  margin-bottom:10px;
 }
 .ctrl {
   width:46px; height:46px; border-radius:50%; border:none;
@@ -444,13 +445,13 @@ button, input, input[type="range"], .video-wrap, video, iframe {
 .ctrl.leave { background:var(--red); }
 
 .chat-drawer {
-  position:fixed; bottom:0; left:0; right:0;
+  position:fixed; bottom:74px; left:0; right:0;
   background:rgba(13,13,22,.98); backdrop-filter:blur(20px);
   border-top:1px solid var(--border); border-radius:22px 22px 0 0;
   transition:height .4s cubic-bezier(.33,1,.68,1);
   height:56px; z-index:50; display:flex; flex-direction:column; overflow:hidden;
 }
-.chat-drawer.open { height:52dvh; }
+.chat-drawer.open { height:calc(52dvh - 74px); }
 .drawer-handle {
   height:56px; display:flex; align-items:center;
   padding:0 16px; cursor:pointer; flex-shrink:0; position:relative;
@@ -1574,6 +1575,9 @@ async function enterRoom(){
   document.getElementById('volumeBar').value = '100';
   me.micOn = false;
   updateMicButtonUI();
+
+  await ensureSilentAudioTrack();
+
   voiceSyncReady = true;
 
   listenUsers();
@@ -2200,6 +2204,26 @@ function getOutboundAudioTrack(){
   return silentAudioTrack || null;
 }
 
+function ensurePeerAudioSender(peer){
+  if(!peer?.pc || peer.audioSender) return peer?.audioSender || null;
+  const track = getOutboundAudioTrack();
+
+  try {
+    if(peer.pc.addTransceiver){
+      const transceiver = peer.pc.addTransceiver('audio', { direction:'sendrecv' });
+      peer.audioSender = transceiver?.sender || null;
+    }
+  } catch(_) {}
+
+  if(!peer.audioSender && track && peer.pc.addTrack){
+    try {
+      peer.audioSender = peer.pc.addTrack(track, micStream || new MediaStream([track]));
+    } catch(_) {}
+  }
+
+  return peer.audioSender || null;
+}
+
 async function ensureMicStream(){
   if(micStream && micTrack && micTrack.readyState !== 'ended') return micStream;
   if(!navigator.mediaDevices?.getUserMedia){
@@ -2220,11 +2244,20 @@ async function ensureMicStream(){
 }
 
 function setOutgoingTrackForPeer(peer){
-  if(!peer?.pc || !peer.audioSender) return;
+  if(!peer?.pc) return;
   const track = getOutboundAudioTrack();
+  if(!peer.audioSender) ensurePeerAudioSender(peer);
+  if(!peer.audioSender) return;
+
   try {
     peer.audioSender.replaceTrack(track || null);
-  } catch(_) {}
+  } catch(_) {
+    try {
+      peer.audioSender = null;
+      ensurePeerAudioSender(peer);
+      if(peer.audioSender) peer.audioSender.replaceTrack(track || null);
+    } catch(_) {}
+  }
 }
 
 function setOutgoingTrackForAllPeers(){
@@ -2287,6 +2320,8 @@ function ensureVoicePeer(peerId){
   const audio = document.createElement('audio');
   audio.autoplay = true;
   audio.playsInline = true;
+  audio.muted = false;
+  audio.volume = 1;
   audio.hidden = true;
   audio.dataset.peer = peerId;
   document.body.appendChild(audio);
@@ -2303,7 +2338,15 @@ function ensureVoicePeer(peerId){
         if(!existing) target.addTrack(track);
       });
     });
-    audio.play().catch(()=>{});
+    audio.play().catch(() => {
+      const tryPlay = () => {
+        audio.play().catch(() => {});
+        document.removeEventListener('pointerdown', tryPlay);
+        document.removeEventListener('keydown', tryPlay);
+      };
+      document.addEventListener('pointerdown', tryPlay, { once:true });
+      document.addEventListener('keydown', tryPlay, { once:true });
+    });
   };
 
   pc.onicecandidate = (event) => {
@@ -2324,15 +2367,7 @@ function ensureVoicePeer(peerId){
     }
   };
 
-  try {
-    peer.audioSender = pc.addTransceiver('audio', { direction: 'sendrecv' }).sender;
-  } catch(_) {
-    try {
-      const tempTrack = getOutboundAudioTrack();
-      if(tempTrack) peer.audioSender = pc.addTrack(tempTrack, micStream || new MediaStream([tempTrack]));
-    } catch(_) {}
-  }
-
+  ensurePeerAudioSender(peer);
   setOutgoingTrackForPeer(peer);
 
   peer.candidateRef.on('child_added', async snap => {
@@ -2364,6 +2399,7 @@ function ensureVoicePeer(peerId){
         if(peer.hasAppliedOffer && pc.currentRemoteDescription?.sdp === offer.sdp) return;
         peer.hasAppliedOffer = true;
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        ensurePeerAudioSender(peer);
         setOutgoingTrackForPeer(peer);
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
@@ -2381,6 +2417,7 @@ async function startVoicePeer(peerId){
   const peer = ensureVoicePeer(peerId);
   if(!peer || !peer.isInitiator || peer.offerSent) return;
   try {
+    ensurePeerAudioSender(peer);
     setOutgoingTrackForPeer(peer);
     const offer = await peer.pc.createOffer();
     await peer.pc.setLocalDescription(offer);
@@ -2394,7 +2431,10 @@ async function startVoicePeer(peerId){
 function syncVoicePeers(){
   if(!voiceSyncReady) return;
   const activeIds = Object.keys(parts || {}).filter(uid => uid !== me.id);
-  activeIds.forEach(uid => ensureVoicePeer(uid));
+  activeIds.forEach(uid => {
+    const peer = ensureVoicePeer(uid);
+    ensurePeerAudioSender(peer);
+  });
   Object.keys(voicePeers).forEach(uid => {
     if(!parts[uid]) cleanupVoicePeer(uid);
   });
@@ -2425,6 +2465,7 @@ async function toggleMic(){
     }
     micTrack.enabled = true;
     me.micOn = true;
+    Object.values(voicePeers).forEach(peer => ensurePeerAudioSender(peer));
     setOutgoingTrackForAllPeers();
     updateMicButtonUI();
     toast('Mic connected');
