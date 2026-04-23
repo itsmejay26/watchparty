@@ -69,7 +69,7 @@ button, input, input[type="range"], .video-wrap, video, iframe {
 }
 .field:focus { border-color:rgba(91,141,239,.5); box-shadow:0 0 0 3px rgba(91,141,239,.08); }
 .field::placeholder { color:rgba(255,255,255,.2); }
-.avatar-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+.avatar-grid { display:grid; grid-template-columns:repeat(6,1fr); gap:10px; }
 .av-opt {
   aspect-ratio:1; border-radius:50%; border:2px solid transparent;
   cursor:pointer; transition:all .22s cubic-bezier(.34,1.56,.64,1);
@@ -199,6 +199,7 @@ button, input, input[type="range"], .video-wrap, video, iframe {
 .ctrl-btn.play { background:rgba(74,222,128,.16); color:#89f0a8; }
 .ctrl-btn.pause { background:rgba(239,68,68,.16); color:#ff9e9e; }
 .ctrl-btn.seek { background:rgba(91,141,239,.16); color:#c8daff; }
+.ctrl-btn.cc { background:rgba(124,92,232,.18); color:#ddd2ff; }
 
 .seek-wrap, .volume-wrap {
   display:flex; align-items:center; gap:10px; width:100%;
@@ -212,6 +213,104 @@ button, input, input[type="range"], .video-wrap, video, iframe {
 }
 .volume-label {
   font-size:11px; color:var(--muted); min-width:42px;
+}
+
+.caption-panel {
+  margin:0 14px 12px;
+  background:rgba(255,255,255,.04);
+  border:1px solid var(--border);
+  border-radius:18px;
+  padding:12px;
+  display:none;
+  flex-direction:column;
+  gap:10px;
+  z-index:3;
+}
+.caption-panel.open { display:flex; }
+.caption-head {
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+}
+.caption-title {
+  display:flex; flex-direction:column; gap:2px;
+}
+.caption-title strong {
+  font-size:14px;
+  font-family:'Syne',sans-serif;
+}
+.caption-title span {
+  font-size:11px;
+  color:var(--muted);
+}
+.caption-toggle {
+  border:none;
+  background:rgba(255,255,255,.08);
+  color:var(--text);
+  border-radius:999px;
+  padding:9px 13px;
+  font-weight:700;
+  font-size:12px;
+  cursor:pointer;
+}
+.caption-toggle.on {
+  background:rgba(91,141,239,.18);
+  color:#c8daff;
+}
+.caption-toggle.off {
+  background:rgba(255,255,255,.08);
+  color:var(--muted);
+}
+.caption-list {
+  max-height:200px;
+  overflow-y:auto;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  padding-right:2px;
+}
+.caption-list::-webkit-scrollbar { width:4px; }
+.caption-list::-webkit-scrollbar-thumb { background:rgba(255,255,255,.12); border-radius:4px; }
+.caption-item {
+  width:100%;
+  border:1px solid rgba(255,255,255,.08);
+  background:rgba(255,255,255,.05);
+  color:var(--text);
+  border-radius:14px;
+  padding:11px 12px;
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  text-align:left;
+}
+.caption-item:active { transform:scale(.99); }
+.caption-item.active {
+  border-color:rgba(91,141,239,.45);
+  background:rgba(91,141,239,.14);
+}
+.caption-item .left {
+  display:flex; flex-direction:column; gap:2px;
+}
+.caption-item .label {
+  font-size:13px;
+  font-weight:700;
+}
+.caption-item .meta {
+  font-size:11px;
+  color:var(--muted);
+}
+.caption-chip {
+  font-size:10px;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+  border-radius:999px;
+  padding:5px 8px;
+  background:rgba(255,255,255,.07);
+  color:var(--muted);
+}
+.caption-item.active .caption-chip {
+  background:rgba(91,141,239,.22);
+  color:#c8daff;
 }
 
 .info-bar {
@@ -533,6 +632,10 @@ button, input, input[type="range"], .video-wrap, video, iframe {
       <button class="ctrl-btn seek" onclick="seekBy(10)">+10s</button>
     </div>
 
+    <div class="control-row">
+      <button class="ctrl-btn cc" onclick="toggleCaptionsPanel()">CC / Captions</button>
+    </div>
+
     <div class="seek-wrap">
       <span class="seek-time" id="currentTimeLabel">0:00</span>
       <input id="seekBar" class="seekbar" type="range" min="0" max="1000" value="0" />
@@ -543,6 +646,17 @@ button, input, input[type="range"], .video-wrap, video, iframe {
       <span class="volume-label">Volume</span>
       <input id="volumeBar" class="volume" type="range" min="0" max="100" value="100" />
     </div>
+  </div>
+
+  <div class="caption-panel" id="captionPanel">
+    <div class="caption-head">
+      <div class="caption-title">
+        <strong>Captions</strong>
+        <span id="captionStatusText">Available tracks appear here</span>
+      </div>
+      <button class="caption-toggle off" id="captionToggleBtn" onclick="toggleCaptionsEnabled()">Off</button>
+    </div>
+    <div class="caption-list" id="captionList"></div>
   </div>
 
   <div class="info-bar">
@@ -600,7 +714,11 @@ firebase.initializeApp({
 });
 const db = firebase.database();
 
-const SEEDS = ['Felix','Lilly','Max','Sophie','Leo','Emma','Finn','Mia','Noah','Zara','Sam','Luna'];
+const SEEDS = [
+  'Felix','Lilly','Max','Sophie','Leo','Emma','Finn','Mia','Noah','Zara',
+  'Sam','Luna','Aria','Kai','Nova','Jasper','Ivy','Theo','Hazel','Ezra',
+  'Rin','Nico','Mika','Aiden'
+];
 const SYNC_TOLERANCE_SECONDS = 8;
 
 const me = {
@@ -637,6 +755,13 @@ let ttDuration = 0;
 let ttCurrentTime = 0;
 let ttMuted = false;
 let pendingTTApply = null;
+
+let captionPanelOpen = false;
+let captionTracks = [];
+let selectedCaptionIndex = -1;
+let lastCaptionIndex = -1;
+let captionEnabled = false;
+let captionSource = 'none';
 
 db.ref('.info/serverTimeOffset').on('value', snap => {
   serverOffset = snap.val() || 0;
@@ -940,6 +1065,7 @@ function loadTikTokFrame(id, autoplay = false){
   setVisiblePlayer('tiktok');
   document.getElementById('videoEmpty').classList.add('hidden');
   document.getElementById('ttFrame').src = buildTikTokSrc(id, autoplay);
+  syncCaptionTracksFromSource();
 }
 function ttPost(type, value = null){
   const f = document.getElementById('ttFrame');
@@ -992,6 +1118,188 @@ window.addEventListener('message', (event) => {
   }
 });
 
+function resetCaptionUI(){
+  captionTracks = [];
+  selectedCaptionIndex = -1;
+  lastCaptionIndex = -1;
+  captionEnabled = false;
+  captionSource = 'none';
+  renderCaptionPanel();
+}
+
+function trackLabel(track, idx){
+  const parts = [];
+  if(track.label) parts.push(track.label);
+  if(track.name && track.name !== track.label) parts.push(track.name);
+  if(track.lang && !parts.includes(track.lang)) parts.push(track.lang);
+  if(!parts.length) parts.push(`Track ${idx + 1}`);
+  return parts.join(' • ');
+}
+
+function renderCaptionPanel(){
+  const panel = document.getElementById('captionPanel');
+  const list = document.getElementById('captionList');
+  const toggleBtn = document.getElementById('captionToggleBtn');
+  const status = document.getElementById('captionStatusText');
+
+  panel.classList.toggle('open', captionPanelOpen);
+
+  if(!list || !toggleBtn || !status) return;
+
+  if(!currentUrl || currentType !== 'direct'){
+    list.innerHTML = `<div style="padding:10px 2px;color:var(--muted);font-size:12px;line-height:1.4;">Captions are available for direct streams when the video provides subtitle tracks.</div>`;
+    toggleBtn.textContent = 'Off';
+    toggleBtn.className = 'caption-toggle off';
+    status.textContent = 'Captions are not available for this source';
+    return;
+  }
+
+  if(!captionTracks.length){
+    list.innerHTML = `<div style="padding:10px 2px;color:var(--muted);font-size:12px;line-height:1.4;">No caption tracks were detected in this video.</div>`;
+    toggleBtn.textContent = 'Off';
+    toggleBtn.className = 'caption-toggle off';
+    status.textContent = 'No caption tracks found';
+    return;
+  }
+
+  toggleBtn.textContent = captionEnabled ? 'On' : 'Off';
+  toggleBtn.className = `caption-toggle ${captionEnabled ? 'on' : 'off'}`;
+  status.textContent = captionEnabled
+    ? `Showing ${trackLabel(captionTracks.find(t => t.index === selectedCaptionIndex) || captionTracks[0], selectedCaptionIndex >= 0 ? selectedCaptionIndex : 0)}`
+    : `Choose a language or turn captions on`;
+
+  list.innerHTML = '';
+
+  const offBtn = document.createElement('button');
+  offBtn.className = `caption-item ${!captionEnabled ? 'active' : ''}`;
+  offBtn.innerHTML = `
+    <div class="left">
+      <div class="label">Off</div>
+      <div class="meta">Disable captions</div>
+    </div>
+    <div class="caption-chip">No CC</div>
+  `;
+  offBtn.onclick = ()=>selectCaptionTrack(-1);
+  list.appendChild(offBtn);
+
+  captionTracks.forEach((track, idx)=>{
+    const item = document.createElement('button');
+    const active = captionEnabled && selectedCaptionIndex === track.index;
+    item.className = `caption-item ${active ? 'active' : ''}`;
+    item.innerHTML = `
+      <div class="left">
+        <div class="label">${esc(trackLabel(track, idx))}</div>
+        <div class="meta">${esc(track.kind || 'subtitle')} track</div>
+      </div>
+      <div class="caption-chip">${active ? 'On' : 'Select'}</div>
+    `;
+    item.onclick = ()=>selectCaptionTrack(track.index);
+    list.appendChild(item);
+  });
+}
+
+function syncCaptionTracksFromSource(){
+  if(currentType !== 'direct' || !currentUrl){
+    resetCaptionUI();
+    return;
+  }
+
+  const v = videoEl();
+  if(!v) return;
+
+  const hasNativeHls = !!v.canPlayType('application/vnd.apple.mpegurl');
+  const looksLikeM3U8 = /\.m3u8(\?|#|$)/i.test(currentUrl);
+
+  if(hlsInstance && looksLikeM3U8){
+    const tracks = Array.isArray(hlsInstance.subtitleTracks) ? hlsInstance.subtitleTracks : [];
+    captionSource = 'hls';
+    captionTracks = tracks.map((track, idx) => ({
+      index: idx,
+      label: track.name || track.label || `Track ${idx + 1}`,
+      lang: track.lang || track.language || '',
+      kind: track.type || 'subtitle'
+    }));
+  } else if(hasNativeHls || v.textTracks){
+    const tracks = Array.from(v.textTracks || []);
+    captionSource = 'native';
+    captionTracks = tracks.map((track, idx) => ({
+      index: idx,
+      label: track.label || `Track ${idx + 1}`,
+      lang: track.language || '',
+      kind: track.kind || 'subtitles'
+    }));
+  } else {
+    captionTracks = [];
+    captionSource = 'none';
+  }
+
+  if(!captionTracks.length){
+    captionEnabled = false;
+    selectedCaptionIndex = -1;
+  } else if(selectedCaptionIndex >= captionTracks.length && captionSource === 'hls'){
+    selectedCaptionIndex = -1;
+    captionEnabled = false;
+  }
+
+  renderCaptionPanel();
+  applyCaptionSelectionToSource(captionEnabled ? selectedCaptionIndex : -1, true);
+}
+
+function applyCaptionSelectionToSource(index, silent = false){
+  if(currentType !== 'direct') return;
+  const v = videoEl();
+  if(!v) return;
+
+  const looksLikeM3U8 = /\.m3u8(\?|#|$)/i.test(currentUrl);
+  const enable = index >= 0;
+
+  selectedCaptionIndex = index;
+  captionEnabled = enable;
+  if(enable) lastCaptionIndex = index;
+
+  if(hlsInstance && looksLikeM3U8 && captionSource === 'hls'){
+    try { hlsInstance.subtitleTrack = enable ? index : -1; } catch(_) {}
+  } else {
+    const tracks = Array.from(v.textTracks || []);
+    tracks.forEach((track, i)=>{
+      track.mode = enable && i === index ? 'showing' : 'disabled';
+    });
+  }
+
+  renderCaptionPanel();
+  if(!silent) toast(enable ? 'Captions enabled' : 'Captions disabled');
+}
+
+function selectCaptionTrack(index){
+  if(index < 0){
+    applyCaptionSelectionToSource(-1);
+    return;
+  }
+  if(!captionTracks.length){
+    toast('No captions available in this video.');
+    return;
+  }
+  applyCaptionSelectionToSource(index);
+}
+
+function toggleCaptionsEnabled(){
+  if(!captionTracks.length){
+    toast('No captions available in this video.');
+    return;
+  }
+  if(captionEnabled){
+    applyCaptionSelectionToSource(-1);
+    return;
+  }
+  const restore = captionTracks.find(t => t.index === lastCaptionIndex) || captionTracks[0];
+  applyCaptionSelectionToSource(restore.index);
+}
+
+function toggleCaptionsPanel(){
+  captionPanelOpen = !captionPanelOpen;
+  renderCaptionPanel();
+}
+
 function loadDirectVideo(url, startAt = 0, autoplay = false){
   const v = videoEl();
   setVisiblePlayer('direct');
@@ -1002,15 +1310,49 @@ function loadDirectVideo(url, startAt = 0, autoplay = false){
     hlsInstance = null;
   }
 
-  if(/\.m3u8(\?|#|$)/i.test(url) && window.Hls && Hls.isSupported()){
-    hlsInstance = new Hls({ enableWorker:true, lowLatencyMode:true });
-    hlsInstance.loadSource(url);
-    hlsInstance.attachMedia(v);
-    hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+  resetCaptionUI();
+
+  if(v.canPlayType('application/vnd.apple.mpegurl') && /\.m3u8(\?|#|$)/i.test(url)){
+    v.src = url;
+    v.onloadedmetadata = () => {
       try { if(isFinite(startAt) && startAt > 0) v.currentTime = Math.max(0, startAt); } catch(_) {}
       if(autoplay) v.play().catch(()=>{});
+      syncCaptionTracksFromSource();
+      syncUiFromPlayer();
+    };
+    v.onloadeddata = () => {
+      syncCaptionTracksFromSource();
+    };
+  } else if(/\.m3u8(\?|#|$)/i.test(url) && window.Hls && Hls.isSupported()){
+    hlsInstance = new Hls({
+      enableWorker:true,
+      lowLatencyMode:true,
+      subtitleDisplay:true
+    });
+
+    hlsInstance.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
+      try { if(isFinite(startAt) && startAt > 0) v.currentTime = Math.max(0, startAt); } catch(_) {}
+      if(autoplay) v.play().catch(()=>{});
+      captionTracks = Array.isArray(data?.subtitleTracks) ? data.subtitleTracks.map((track, idx) => ({
+        index: idx,
+        label: track.name || track.label || `Track ${idx + 1}`,
+        lang: track.lang || track.language || '',
+        kind: track.type || 'subtitle'
+      })) : [];
+      captionSource = 'hls';
+      renderCaptionPanel();
+      applyCaptionSelectionToSource(captionEnabled ? selectedCaptionIndex : -1, true);
       syncUiFromPlayer();
     });
+
+    hlsInstance.on(Hls.Events.ERROR, (event, data) => {
+      if(data?.fatal){
+        toast('HLS playback error. The stream may block cross-origin playback.');
+      }
+    });
+
+    hlsInstance.loadSource(url);
+    hlsInstance.attachMedia(v);
   } else {
     if(v.src !== url){
       v.src = url;
@@ -1020,6 +1362,7 @@ function loadDirectVideo(url, startAt = 0, autoplay = false){
     v.onloadedmetadata = () => {
       try { if(isFinite(startAt) && startAt > 0) v.currentTime = Math.max(0, startAt); } catch(_) {}
       if(autoplay) v.play().catch(()=>{});
+      syncCaptionTracksFromSource();
       syncUiFromPlayer();
     };
   }
@@ -1115,6 +1458,8 @@ function leaveRoom(){
   ttMuted = false;
   pendingTTApply = null;
   pendingYTApply = null;
+  captionPanelOpen = false;
+  resetCaptionUI();
 
   if(hlsInstance){ hlsInstance.destroy(); hlsInstance = null; }
   if(ytPlayer){
@@ -1374,6 +1719,7 @@ function loadStateIntoUI(state){
       }
       if(state.playing && v.paused) v.play().catch(()=>{});
       if(!state.playing && !v.paused) v.pause();
+      syncCaptionTracksFromSource();
       syncUiFromPlayer();
     }
   }
@@ -1386,6 +1732,7 @@ function loadStateIntoUI(state){
       applyYTState(state);
     }
     setVisiblePlayer('youtube');
+    resetCaptionUI();
     syncUiFromPlayer();
   }
 
@@ -1397,6 +1744,7 @@ function loadStateIntoUI(state){
       applyTikTokState(state);
     }
     setVisiblePlayer('tiktok');
+    resetCaptionUI();
     syncUiFromPlayer();
   }
 }
@@ -1479,7 +1827,7 @@ function startSyncLoop(){
 
 /* DIRECT VIDEO EVENTS */
 const directVideo = document.getElementById('mainVideo');
-directVideo.addEventListener('loadedmetadata', ()=>{ if(currentType==='direct') syncUiFromPlayer(); });
+directVideo.addEventListener('loadedmetadata', ()=>{ if(currentType==='direct') { syncCaptionTracksFromSource(); syncUiFromPlayer(); } });
 directVideo.addEventListener('durationchange', ()=>{ if(currentType==='direct') syncUiFromPlayer(); });
 directVideo.addEventListener('timeupdate', ()=>{ if(currentType==='direct' && !localSeekDrag) syncUiFromPlayer(); });
 directVideo.addEventListener('volumechange', ()=>{ if(currentType==='direct') syncUiFromPlayer(); });
@@ -1505,8 +1853,10 @@ function loadVideo(){
   if(parsed.type === 'direct'){
     loadDirectVideo(parsed.url, 0, true);
   } else if(parsed.type === 'youtube'){
+    resetCaptionUI();
     createOrResetYT(parsed.videoId, parsed.startAt || 0, true);
   } else if(parsed.type === 'tiktok'){
+    resetCaptionUI();
     loadTikTokFrame(parsed.videoId, true);
   }
 
@@ -1661,6 +2011,7 @@ document.getElementById('videoUrlInput').addEventListener('keypress', e=>{
 
 document.getElementById('volumeBar').value = '100';
 document.getElementById('seekBar').value = '0';
+renderCaptionPanel();
 </script>
 </body>
 </html>
