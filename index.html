@@ -541,6 +541,7 @@ firebase.initializeApp({
 const db = firebase.database();
 
 const SEEDS = ['Felix','Lilly','Max','Sophie','Leo','Emma','Finn','Mia','Noah','Zara','Sam','Luna'];
+const SYNC_TOLERANCE_SECONDS = 8;
 
 const me = {
   id: 'u_' + Math.random().toString(36).slice(2,9),
@@ -856,7 +857,10 @@ function applyYTState(state){
   if(state.videoId && state.videoId !== currentVideoId){
     ytPlayer.loadVideoById({ videoId:state.videoId, startSeconds:target || 0 });
   } else {
-    ytPlayer.seekTo(target || 0, true);
+    const current = ytPlayer.getCurrentTime?.() || 0;
+    if(Math.abs(current - target) > SYNC_TOLERANCE_SECONDS){
+      ytPlayer.seekTo(target || 0, true);
+    }
   }
 
   if(typeof state.volume === 'number'){
@@ -1277,7 +1281,7 @@ function loadStateIntoUI(state){
       const v = videoEl();
       if(typeof state.volume === 'number') v.volume = Math.max(0, Math.min(1, state.volume));
       const target = getLiveTargetTime(state);
-      if(Math.abs((v.currentTime || 0) - target) > 0.75){
+      if(Math.abs((v.currentTime || 0) - target) > SYNC_TOLERANCE_SECONDS){
         try { v.currentTime = target; } catch(_) {}
       }
       if(state.playing && v.paused) v.play().catch(()=>{});
@@ -1358,10 +1362,11 @@ function startSyncLoop(){
 
     const expected = getLiveTargetTime(currentState);
     const d = getDuration();
+
     if(currentState.playing && d > 0){
       if(currentType === 'direct'){
         const v = videoEl();
-        if(v.src && !v.paused && Math.abs((v.currentTime || 0) - expected) > 2.0){
+        if(v.src && !v.paused && Math.abs((v.currentTime || 0) - expected) > SYNC_TOLERANCE_SECONDS){
           isApplyingRemote = true;
           try { v.currentTime = expected; } catch(_) {}
           setTimeout(()=>{ isApplyingRemote = false; }, 200);
@@ -1370,16 +1375,18 @@ function startSyncLoop(){
 
       if(currentType === 'youtube' && ytPlayer && ytReady){
         const c = ytPlayer.getCurrentTime?.() || 0;
-        if(Math.abs(c - expected) > 2.0) ytPlayer.seekTo(expected, true);
+        if(Math.abs(c - expected) > SYNC_TOLERANCE_SECONDS){
+          ytPlayer.seekTo(expected, true);
+        }
       }
 
       if(currentType === 'tiktok'){
-        if(Math.abs(ttCurrentTime - expected) > 2.0){
+        if(Math.abs(ttCurrentTime - expected) > SYNC_TOLERANCE_SECONDS){
           ttPost('seekTo', expected);
         }
       }
     }
-  }, 800);
+  }, 1000);
 }
 
 /* DIRECT VIDEO EVENTS */
