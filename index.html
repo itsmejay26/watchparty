@@ -217,7 +217,7 @@
         /* ── Video Area ── */
         .video-wrap {
             flex-shrink: 0;
-            height: 38dvh;
+            height: 42dvh;
             background: #000;
             position: relative;
             display: flex;
@@ -289,31 +289,42 @@
             white-space: nowrap;
         }
 
-        /* ── Player Controls Bar (below video) ── */
-        .player-bar {
-            flex-shrink: 0;
-            background: rgba(8,8,20,0.95);
+        /* ── Video controls bar (BELOW the video player) ── */
+        .vid-controls-bar {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            background: rgba(8,8,16,0.95);
             border-bottom: 1px solid var(--border);
-            padding: 8px 14px 10px;
-            display: none; /* shown when video is loaded */
-            flex-direction: column;
-            gap: 7px;
+            flex-shrink: 0;
         }
 
-        .player-bar.visible { display: flex; }
+        .vid-controls-bar.visible { display: flex; }
 
-        /* Progress track row */
-        .prog-row {
+        .play-pause-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: none;
+            background: rgba(91,141,239,0.2);
+            border: 1px solid rgba(91,141,239,0.3);
+            color: var(--accent);
             display: flex;
             align-items: center;
-            gap: 8px;
+            justify-content: center;
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: all 0.15s;
         }
+
+        .play-pause-btn:active { transform: scale(0.88); }
 
         .prog-track {
             flex: 1;
             height: 4px;
-            background: rgba(255,255,255,0.15);
-            border-radius: 4px;
+            background: rgba(255,255,255,0.18);
+            border-radius: 2px;
             cursor: pointer;
             position: relative;
         }
@@ -321,47 +332,18 @@
         .prog-fill {
             height: 100%;
             background: var(--accent);
-            border-radius: 4px;
+            border-radius: 2px;
             width: 0%;
             pointer-events: none;
-            transition: width 0.1s linear;
         }
 
         .vid-time {
             font-size: 10px;
-            color: rgba(255,255,255,0.4);
+            color: rgba(255,255,255,0.45);
             white-space: nowrap;
             font-family: 'Syne', sans-serif;
             letter-spacing: 0.04em;
-            min-width: 72px;
-            text-align: right;
         }
-
-        /* Play/pause button row */
-        .playback-controls {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 12px;
-        }
-
-        .play-btn {
-            width: 38px;
-            height: 38px;
-            border-radius: 50%;
-            border: none;
-            background: linear-gradient(135deg, var(--accent), var(--accent2));
-            color: #fff;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            transition: all 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
-            box-shadow: 0 4px 14px rgba(91,141,239,0.35);
-            flex-shrink: 0;
-        }
-
-        .play-btn:active { transform: scale(0.88); }
 
         /* ── Info Bar ── */
         .info-bar {
@@ -521,7 +503,7 @@
             to   { opacity: 1; transform: translateX(-50%) scale(1) translateY(0); }
         }
 
-        /* ── Controls Bar ── */
+        /* ── Controls Bar (Mic / Cam / Leave only) ── */
         .controls-row {
             display: flex;
             justify-content: center;
@@ -803,24 +785,18 @@
         </div>
     </div>
 
-    <!-- ── Player Controls Bar (below video, only for direct MP4) ── -->
-    <div class="player-bar" id="playerBar">
-        <!-- Progress row -->
-        <div class="prog-row">
-            <div class="prog-track" id="progTrack">
-                <div class="prog-fill" id="progFill"></div>
-            </div>
-            <span class="vid-time" id="vidTime">0:00 / 0:00</span>
+    <!-- ── Video controls bar (play/pause + progress) — BELOW the video ── -->
+    <div class="vid-controls-bar" id="vidControlsBar">
+        <button class="play-pause-btn" id="playBtn" onclick="togglePlay()">
+            <!-- Play icon (default) -->
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+        </button>
+        <div class="prog-track" id="progTrack">
+            <div class="prog-fill" id="progFill"></div>
         </div>
-        <!-- Play / Pause -->
-        <div class="playback-controls">
-            <button class="play-btn" id="playBtn" onclick="togglePlay()">
-                <!-- Play icon (default) -->
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-                    <polygon points="5 3 19 12 5 21 5 3"/>
-                </svg>
-            </button>
-        </div>
+        <span class="vid-time" id="vidTime">0:00 / 0:00</span>
     </div>
 
     <!-- Info bar -->
@@ -840,7 +816,7 @@
         <div class="participants-scroll" id="partList"></div>
     </div>
 
-    <!-- Controls (mic / cam / leave only) -->
+    <!-- Controls (Mic / Cam / Leave only) -->
     <div class="controls-row">
         <button id="micBtn" class="ctrl on" onclick="toggleMic()">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
@@ -917,13 +893,12 @@ let syncDebounceTimer = null;
 
 /* ═══════════════════════════════════════════════════════════════
    FIX 3 — Sync depth counter (replaces boolean isSyncing flag)
-   Prevents multiple overlapping timers from releasing the lock
-   too early and causing echo loops.
+   Multiple overlapping locks no longer conflict.
 ════════════════════════════════════════════════════════════════ */
 let syncDepth = 0;
-function beginSync()          { syncDepth++; }
-function endSync(delay = 0)   { setTimeout(() => { syncDepth = Math.max(0, syncDepth - 1); }, delay); }
-function isSyncing()          { return syncDepth > 0; }
+function beginSync()            { syncDepth++; }
+function endSync(delay = 0)     { setTimeout(() => { syncDepth = Math.max(0, syncDepth - 1); }, delay); }
+function isSyncing()            { return syncDepth > 0; }
 
 /* ═══════════════════════════════════════════════════════════════
    JOIN SCREEN
@@ -1084,40 +1059,19 @@ document.getElementById('chatField').addEventListener('keypress', e => { if (e.k
    VIDEO PLAYER
 ════════════════════════════════════════════════════════════════ */
 
+/* FIX 5 — removed ts from loadVideo; no more client-clock latency comp */
 function loadVideo() {
     const url = document.getElementById('videoUrlInput').value.trim();
     if (!url) return;
-    /* FIX 5 — removed ts: Date.now() to eliminate clock-skew latency bugs */
     refs.video.set({ url, playing: true, currentTime: 0, by: me.id });
-}
-
-/* ─── Play/Pause button (FIX 1) ─── */
-function togglePlay() {
-    const vid = document.getElementById('mainVideo');
-    if (!vid.src) return;
-    if (vid.paused) {
-        vid.play();
-    } else {
-        vid.pause();
-    }
-}
-
-function updatePlayBtn(isPaused) {
-    const b = document.getElementById('playBtn');
-    if (!b) return;
-    b.innerHTML = isPaused
-        /* Play icon */
-        ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>`
-        /* Pause icon */
-        : `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`;
 }
 
 /*
  * setupPlayer(url, startTime, autoPlay)
  *
- * FIX 2 — Hard 8-second safety timeout ensures isSyncing never gets stuck
- *          permanently if loadedmetadata never fires (bad URL, CORS, etc.)
- * FIX 3 — Uses beginSync() / endSync() depth counter instead of boolean flag
+ * FIX 2 — Hard 8-second safety timer ensures isSyncing (syncDepth) is
+ *          always released even if loadedmetadata never fires.
+ * FIX 3 — Uses beginSync() / endSync() depth counter instead of boolean.
  */
 function setupPlayer(url, startTime = 0, autoPlay = true) {
     currentVideoUrl = url;
@@ -1125,7 +1079,7 @@ function setupPlayer(url, startTime = 0, autoPlay = true) {
     const vid = document.getElementById('mainVideo');
     const yt  = document.getElementById('ytFrame');
     const emp = document.getElementById('videoEmpty');
-    const bar = document.getElementById('playerBar');
+    const bar = document.getElementById('vidControlsBar');
 
     emp.classList.add('hidden');
 
@@ -1137,20 +1091,17 @@ function setupPlayer(url, startTime = 0, autoPlay = true) {
         yt.src = `https://www.youtube.com/embed/${id}?autoplay=1&controls=1&start=${start}`;
         vid.classList.add('hidden');
         yt.classList.remove('hidden');
-        bar.classList.remove('visible'); /* no player bar for YouTube */
+        bar.classList.remove('visible'); // no custom controls for YT
         return;
     }
 
     /* ── Direct video ── */
     yt.classList.add('hidden');
     vid.classList.remove('hidden');
-    bar.classList.add('visible');
+    bar.classList.add('visible'); // show play/pause + progress bar
 
-    /*
-     * FIX 3 — beginSync() instead of isSyncing = true
-     * Lock BEFORE touching src/load to suppress the spurious "pause"
-     * event the browser fires during loading.
-     */
+    // Lock BEFORE touching src/load to suppress the spurious "pause" event
+    // the browser fires during loading.
     beginSync();
 
     vid.src = url;
@@ -1160,14 +1111,14 @@ function setupPlayer(url, startTime = 0, autoPlay = true) {
         vid.removeEventListener('loadedmetadata', onMeta);
         if (startTime > 0) vid.currentTime = startTime;
 
-        /* FIX 2 — hard safety: always release lock after 8 s no matter what */
+        // FIX 2: hard fallback — release lock after 8s no matter what
         const safetyTimer = setTimeout(() => { endSync(); }, 8000);
 
         if (autoPlay) {
             vid.play()
                 .then(() => {
                     clearTimeout(safetyTimer);
-                    endSync(400); /* FIX 3 — endSync(N) instead of setTimeout(isSyncing=false, N) */
+                    endSync(400);
                 })
                 .catch(() => {
                     clearTimeout(safetyTimer);
@@ -1180,19 +1131,17 @@ function setupPlayer(url, startTime = 0, autoPlay = true) {
     };
     vid.addEventListener('loadedmetadata', onMeta);
 
-    /* ── Local event → Firebase (only when not in a sync window) ── */
+    /* ── Local event → Firebase (only when not syncing from remote) ── */
     vid.onplay = () => {
-        updatePlayBtn(false);
-        if (isSyncing()) return; /* FIX 3 — isSyncing() function call */
+        if (isSyncing()) return;
+        updatePlayBtn(false); // video is playing → show pause icon
         pushVideoState(true, vid.currentTime);
     };
-
     vid.onpause = () => {
-        updatePlayBtn(true);
         if (isSyncing()) return;
+        updatePlayBtn(true); // video is paused → show play icon
         pushVideoState(false, vid.currentTime);
     };
-
     vid.onseeked = () => {
         if (isSyncing()) return;
         clearTimeout(syncDebounceTimer);
@@ -1200,7 +1149,6 @@ function setupPlayer(url, startTime = 0, autoPlay = true) {
             pushVideoState(!vid.paused, vid.currentTime);
         }, 300);
     };
-
     vid.ontimeupdate = updateProgress;
 
     /* ── Click on progress bar to seek ── */
@@ -1210,7 +1158,7 @@ function setupPlayer(url, startTime = 0, autoPlay = true) {
     };
 }
 
-/* FIX 5 — removed ts: Date.now() */
+/* FIX 5 — removed ts; no more client-clock latency compensation */
 function pushVideoState(playing, currentTime) {
     if (!refs.video) return;
     refs.video.update({ playing, currentTime, by: me.id });
@@ -1226,7 +1174,7 @@ function listenVideo() {
 
         const isYT = d.url.includes('youtube.com') || d.url.includes('youtu.be');
 
-        /* FIX 5 — no latency compensation; use d.currentTime directly */
+        /* FIX 5 — no latency compensation; always use d.currentTime directly */
         const expectedTime = d.currentTime;
 
         /* Case 1: new URL → set up player for everyone */
@@ -1245,9 +1193,9 @@ function listenVideo() {
         if (!vid.src) return;
 
         /* Apply remote state */
-        beginSync(); /* FIX 3 */
+        beginSync(); // FIX 3
 
-        /* FIX 4 — lower seek dead zone from 1.5 s → 0.5 s */
+        /* FIX 4 — threshold lowered from 1.5s → 0.5s */
         if (Math.abs(vid.currentTime - expectedTime) > 0.5) {
             vid.currentTime = expectedTime;
         }
@@ -1255,8 +1203,35 @@ function listenVideo() {
         if (d.playing && vid.paused)   vid.play().catch(() => {});
         if (!d.playing && !vid.paused) vid.pause();
 
-        endSync(600); /* FIX 3 */
+        // Update the play/pause button icon to match remote state
+        updatePlayBtn(!d.playing);
+
+        endSync(600); // FIX 3
     });
+}
+
+/* ── FIX 1 — Play/pause toggle (triggered by the button below the video) ── */
+function togglePlay() {
+    const vid = document.getElementById('mainVideo');
+    if (!vid.src) return;
+    if (vid.paused) {
+        vid.play();
+    } else {
+        vid.pause();
+    }
+}
+
+/* Updates the play/pause button icon.
+   showPlay=true  → show ▶ (video is paused, click will play)
+   showPlay=false → show ⏸ (video is playing, click will pause)           */
+function updatePlayBtn(showPlay) {
+    const b = document.getElementById('playBtn');
+    if (!b) return;
+    if (showPlay) {
+        b.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+    } else {
+        b.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`;
+    }
 }
 
 function updateProgress() {
@@ -1304,17 +1279,17 @@ function leaveRoom() {
     Object.values(refs).forEach(r => r.off?.());
     refs = {};
     currentVideoUrl = '';
+    syncDepth = 0; // reset sync counter on leave
     const vid = document.getElementById('mainVideo');
     vid.pause();
     vid.src = '';
     vid.onplay = vid.onpause = vid.onseeked = vid.ontimeupdate = null;
     document.getElementById('ytFrame').src = '';
-    document.getElementById('playerBar').classList.remove('visible');
+    document.getElementById('vidControlsBar').classList.remove('visible');
     document.getElementById('roomScreen').classList.remove('active');
     document.getElementById('joinScreen').classList.add('active');
     document.getElementById('msgsList').innerHTML = '';
     document.getElementById('partList').innerHTML = '';
-    syncDepth = 0; /* reset sync state on leave */
 }
 
 function toggleChat() {
