@@ -29,6 +29,9 @@ body {
   overflow:hidden;
   -webkit-user-select:none; user-select:none;
 }
+body.fs-active {
+  background:#1a1a1a !important;
+}
 h1,h2 { font-family:'Syne',sans-serif; }
 
 button, input, input[type="range"], .video-wrap, video, iframe {
@@ -472,7 +475,7 @@ button, input, input[type="range"], .video-wrap, video, iframe {
   display:flex; justify-content:center; align-items:center;
   gap:clamp(8px, 1.6vw, 12px); padding:clamp(8px, 1.4vw, 10px) clamp(10px, 1.8vw, 16px); background:var(--bg);
   border-top:1px solid var(--border); flex-shrink:0; flex-wrap:wrap;
-  z-index:60;
+  z-index:20;
 }
 .ctrl {
   width:clamp(38px, 5vw, 46px); height:clamp(38px, 5vw, 46px); border-radius:50%; border:none;
@@ -491,7 +494,7 @@ button, input, input[type="range"], .video-wrap, video, iframe {
   background:rgba(13,13,22,.98); backdrop-filter:blur(20px);
   border-top:1px solid var(--border); border-radius:22px 22px 0 0;
   transition:height .4s cubic-bezier(.33,1,.68,1);
-  height:56px; z-index:50; display:flex; flex-direction:column; overflow:hidden;
+  height:56px; z-index:80; display:flex; flex-direction:column; overflow:hidden;
 }
 .chat-drawer.open { height:min(52dvh, 420px); }
 .drawer-handle {
@@ -568,28 +571,6 @@ button, input, input[type="range"], .video-wrap, video, iframe {
   box-shadow:0 6px 20px rgba(0,0,0,.4);
 }
 .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
-
-.chat-min-btn {
-  position:fixed;
-  right:16px;
-  bottom:16px;
-  width:46px;
-  height:46px;
-  border:none;
-  border-radius:50%;
-  background:rgba(13,13,22,.96);
-  border:1px solid rgba(255,255,255,.12);
-  box-shadow:0 14px 28px rgba(0,0,0,.32);
-  color:#fff;
-  display:none;
-  align-items:center;
-  justify-content:center;
-  z-index:9999;
-  cursor:pointer;
-  backdrop-filter:blur(12px);
-}
-.chat-min-btn svg { width:18px; height:18px; }
-.chat-min-btn:active { transform:scale(.94); }
 .hidden { display:none !important; }
 
 /* ON-SCREEN CHAT BUBBLE OVERLAY */
@@ -668,6 +649,19 @@ button, input, input[type="range"], .video-wrap, video, iframe {
   background:#000;
   overflow:hidden;
 }
+#roomScreen.fs-active,
+#roomScreen.fs-active .video-wrap {
+  background:#1f1f1f;
+}
+#roomScreen.fs-active .url-bar {
+  display:none !important;
+}
+#roomScreen.fs-active .controls-row {
+  z-index:5;
+}
+#roomScreen.fs-active .fs-min-btn {
+  display:flex;
+}
 #roomScreen.fs-active .topbar,
 #roomScreen.fs-active .controls-panel,
 #roomScreen.fs-active .info-bar,
@@ -688,36 +682,20 @@ button, input, input[type="range"], .video-wrap, video, iframe {
 }
 #roomScreen.fs-active #floatingBubbles {
   padding:12px 12px 140px 12px;
-  z-index:4;
+  z-index:30;
 }
 #roomScreen.fs-active .toast {
   z-index:99999;
 }
 #roomScreen.fs-active .chat-drawer {
   position:fixed;
-  left:auto;
-  right:12px;
+  left:12px;
   bottom:12px;
-  top:auto;
+  right:auto;
   width:min(380px, calc(100vw - 24px));
-  z-index:8;
+  z-index:50;
   border-radius:24px;
   box-shadow:0 20px 50px rgba(0,0,0,.45);
-  touch-action:none;
-  user-select:none;
-  -webkit-user-select:none;
-}
-#roomScreen.fs-active .chat-drawer.dock-left {
-  left:12px;
-  right:auto;
-}
-#roomScreen.fs-active .chat-drawer.dock-right {
-  right:12px;
-  left:auto;
-}
-#roomScreen.fs-active .chat-drawer.dragging {
-  transition:none !important;
-  cursor:grabbing;
 }
 #roomScreen.fs-active .chat-drawer:not(.open) {
   width:64px;
@@ -726,11 +704,13 @@ button, input, input[type="range"], .video-wrap, video, iframe {
   overflow:hidden;
   padding:0;
   background:rgba(13,13,22,.96);
+  top:50%;
+  bottom:auto;
+  transform:translateY(-50%);
 }
 #roomScreen.fs-active .chat-drawer:not(.open) .drawer-handle {
   height:64px;
   justify-content:center;
-  cursor:grab;
 }
 #roomScreen.fs-active .chat-drawer:not(.open) .handle-pill,
 #roomScreen.fs-active .chat-drawer:not(.open) .handle-label,
@@ -745,6 +725,9 @@ button, input, input[type="range"], .video-wrap, video, iframe {
   line-height:1;
 }
 #roomScreen.fs-active .chat-drawer.open {
+  top:auto;
+  bottom:12px;
+  left:12px;
   height:min(52dvh, 420px);
 }
 #roomScreen.fs-active .chat-drawer.open .msgs-list,
@@ -752,16 +735,28 @@ button, input, input[type="range"], .video-wrap, video, iframe {
   opacity:1;
   pointer-events:auto;
 }
+#roomScreen.fs-active .fs-min-btn {
+  position:fixed;
+  right:12px;
+  bottom:12px;
+  z-index:40;
+  width:46px;
+  height:46px;
+  border:none;
+  border-radius:50%;
+  background:rgba(26,26,42,.95);
+  border:1px solid rgba(255,255,255,.14);
+  color:#fff;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  box-shadow:0 10px 28px rgba(0,0,0,.32);
+}
+#roomScreen.fs-active .fs-min-btn:active {
+  transform:scale(.94);
+}
 #roomScreen.fs-active .chat-drawer.open .drawer-handle {
   height:56px;
-  cursor:grab;
-}
-#roomScreen.fs-active .chat-min-btn {
-  display:flex;
-}
-#roomScreen.fs-active .chat-min-btn.show {
-  opacity:1;
-  pointer-events:auto;
 }
 #roomScreen.fs-active .ctrl.fs {
   background:rgba(91,141,239,.2);
@@ -933,9 +928,12 @@ button, input, input[type="range"], .video-wrap, video, iframe {
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
     </button>
   </div>
+  <button id="fsMinBtn" class="fs-min-btn" onclick="closeChatIfOpen()" title="Minimize chat" aria-label="Minimize chat">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14" opacity="0"/></svg>
+  </button>
 
   <div class="chat-drawer" id="chatDrawer">
-    <div class="drawer-handle" id="chatHandle" onclick="toggleChat()">
+    <div class="drawer-handle" onclick="toggleChat()">
       <div class="handle-pill"></div>
       <span class="handle-label">Group Chat <span class="online-badge" id="onlineBadge">0 online</span></span>
       <svg class="handle-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
@@ -948,12 +946,6 @@ button, input, input[type="range"], .video-wrap, video, iframe {
       </button>
     </div>
   </div>
-
-  <button class="chat-min-btn" id="chatMinBtn" onclick="closeChatIfOpen()" aria-label="Minimize chat" title="Minimize chat">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M4 12h16"/>
-    </svg>
-  </button>
 
   <div id="floatingBubbles"></div>
   <div class="activity-notice" id="activityNotice"></div>
@@ -1030,6 +1022,8 @@ let broadcastSignalRef = null;
 let broadcastListenerReady = false;
 let broadcastRemoteReady = false;
 let broadcastStatusTimer = null;
+let knownUserIds = new Set();
+let usersSnapshotReady = false;
 
 db.ref('.info/serverTimeOffset').on('value', snap => {
   serverOffset = snap.val() || 0;
@@ -1114,6 +1108,7 @@ async function enterFullscreenMode(){
 
   room.classList.add('fs-active');
   document.body.classList.add('fs-active');
+  syncFsUi();
 
   try {
     if(!document.fullscreenElement && room.requestFullscreen){
@@ -1133,6 +1128,7 @@ async function exitFullscreenMode(){
   const room = document.getElementById('roomScreen');
   room?.classList.remove('fs-active');
   document.body.classList.remove('fs-active');
+  syncFsUi();
 
   try {
     if(document.fullscreenElement && document.exitFullscreen){
@@ -1153,163 +1149,19 @@ async function toggleFullscreenMode(){
   }
 }
 
+function syncFsUi(){
+  const room = document.getElementById('roomScreen');
+  const active = !!document.fullscreenElement || room?.classList.contains('fs-active');
+  document.body.classList.toggle('fs-active', active);
+  document.getElementById('fsMinBtn')?.classList.toggle('hidden', !active);
+}
+
 function updateFullscreenButton(){
   const btn = document.getElementById('fsBtn');
   if(!btn) return;
   const active = isFullscreenActive();
   btn.classList.toggle('active', active);
   btn.title = active ? 'Exit fullscreen' : 'Fullscreen';
-}
-
-function updateChatMinButton(){
-  const btn = document.getElementById('chatMinBtn');
-  if(!btn) return;
-  const drawer = document.getElementById('chatDrawer');
-  const show = !!(drawer && isFullscreenActive() && drawer.classList.contains('open'));
-  btn.classList.toggle('show', show);
-  btn.style.display = show ? 'flex' : 'none';
-}
-
-function getChatDockStorageKey(){
-  return `watchparty_chatdock_${me.roomId || 'global'}`;
-}
-
-function loadChatDockPosition(){
-  try {
-    const raw = localStorage.getItem(getChatDockStorageKey());
-    if(!raw) return null;
-    const data = JSON.parse(raw);
-    if(!data || !['left','right'].includes(data.side)) return null;
-    return { side: data.side, x: Number(data.x) || 0, y: Number(data.y) || 0 };
-  } catch(_) {
-    return null;
-  }
-}
-
-function saveChatDockPosition(pos){
-  try {
-    localStorage.setItem(getChatDockStorageKey(), JSON.stringify(pos));
-  } catch(_) {}
-}
-
-function clamp(v, min, max){
-  return Math.max(min, Math.min(max, v));
-}
-
-function applyChatDock(side = 'right', x = null, y = null, save = false){
-  const drawer = document.getElementById('chatDrawer');
-  if(!drawer) return;
-
-  drawer.classList.remove('dock-left', 'dock-right');
-  drawer.classList.add(side === 'left' ? 'dock-left' : 'dock-right');
-
-  if(x !== null && y !== null){
-    drawer.style.left = `${x}px`;
-    drawer.style.top = `${y}px`;
-    drawer.style.right = 'auto';
-    drawer.style.bottom = 'auto';
-    if(save) saveChatDockPosition({ side, x, y });
-  } else {
-    drawer.style.left = '';
-    drawer.style.top = '';
-    drawer.style.bottom = '12px';
-    drawer.style.right = side === 'left' ? 'auto' : '12px';
-  }
-  updateChatMinButton();
-}
-
-function resetChatDockPosition(){
-  const saved = loadChatDockPosition();
-  if(saved){
-    applyChatDock(saved.side, saved.x, saved.y, false);
-  } else {
-    applyChatDock('right', null, null, false);
-  }
-}
-
-function clampChatToViewport(x, y){
-  const drawer = document.getElementById('chatDrawer');
-  if(!drawer) return { x, y };
-  const rect = drawer.getBoundingClientRect();
-  const pad = 8;
-  const maxX = Math.max(pad, window.innerWidth - rect.width - pad);
-  const maxY = Math.max(pad, window.innerHeight - rect.height - pad);
-  return { x: clamp(x, pad, maxX), y: clamp(y, pad, maxY) };
-}
-
-let chatDrag = {
-  pointerId: null,
-  dragging: false,
-  blockClick: false,
-  startX: 0,
-  startY: 0,
-  offsetX: 0,
-  offsetY: 0
-};
-
-function isChatDockMode(){
-  const drawer = document.getElementById('chatDrawer');
-  return !!drawer && isFullscreenActive() && !drawer.classList.contains('open');
-}
-
-function beginChatDrag(e){
-  const drawer = document.getElementById('chatDrawer');
-  if(!drawer || !isChatDockMode()) return;
-  if(e.button !== undefined && e.button !== 0) return;
-
-  const rect = drawer.getBoundingClientRect();
-  chatDrag.pointerId = e.pointerId ?? null;
-  chatDrag.dragging = false;
-  chatDrag.startX = e.clientX;
-  chatDrag.startY = e.clientY;
-  chatDrag.offsetX = e.clientX - rect.left;
-  chatDrag.offsetY = e.clientY - rect.top;
-
-  drawer.classList.add('dragging');
-  drawer.style.transition = 'none';
-
-  try { drawer.setPointerCapture?.(e.pointerId); } catch(_) {}
-
-  const onMove = (ev) => {
-    if(chatDrag.pointerId !== null && ev.pointerId !== chatDrag.pointerId) return;
-    const dx = Math.abs(ev.clientX - chatDrag.startX);
-    const dy = Math.abs(ev.clientY - chatDrag.startY);
-    if(dx > 6 || dy > 6) chatDrag.dragging = true;
-    if(!chatDrag.dragging) return;
-
-    const pos = clampChatToViewport(ev.clientX - chatDrag.offsetX, ev.clientY - chatDrag.offsetY);
-    drawer.style.left = `${pos.x}px`;
-    drawer.style.top = `${pos.y}px`;
-    drawer.style.right = 'auto';
-    drawer.style.bottom = 'auto';
-  };
-
-  const onUp = (ev) => {
-    if(chatDrag.pointerId !== null && ev.pointerId !== chatDrag.pointerId) return;
-    window.removeEventListener('pointermove', onMove);
-    window.removeEventListener('pointerup', onUp);
-    window.removeEventListener('pointercancel', onUp);
-
-    drawer.classList.remove('dragging');
-    drawer.style.transition = '';
-    try { drawer.releasePointerCapture?.(ev.pointerId); } catch(_) {}
-
-    if(!chatDrag.dragging) return;
-
-    chatDrag.blockClick = true;
-    clearTimeout(chatDrag._blockTimer);
-    chatDrag._blockTimer = setTimeout(()=>{ chatDrag.blockClick = false; }, 260);
-
-    const rect2 = drawer.getBoundingClientRect();
-    const side = (rect2.left + rect2.width / 2) < (window.innerWidth / 2) ? 'left' : 'right';
-    const y = clamp(rect2.top, 12, Math.max(12, window.innerHeight - rect2.height - 12));
-    const x = side === 'left' ? 12 : Math.max(12, window.innerWidth - rect2.width - 12);
-    applyChatDock(side, x, y, true);
-  };
-
-  window.addEventListener('pointermove', onMove, { passive:false });
-  window.addEventListener('pointerup', onUp, { passive:false });
-  window.addEventListener('pointercancel', onUp, { passive:false });
 }
 
 function showActivityNotice(message, ms = 2200){
@@ -1321,6 +1173,23 @@ function showActivityNotice(message, ms = 2200){
   showActivityNotice._t = setTimeout(()=>{
     el.classList.remove('show');
   }, ms);
+}
+
+function notifyUserDelta(prevParts, nextParts){
+  const prevIds = new Set(Object.keys(prevParts || {}));
+  const nextIds = new Set(Object.keys(nextParts || {}));
+
+  const joined = Object.keys(nextParts || {}).find(id => !prevIds.has(id));
+  const left = Object.keys(prevParts || {}).find(id => !nextIds.has(id));
+
+  if(joined && nextParts[joined]){
+    const name = nextParts[joined].name || 'Someone';
+    if(joined !== me.id) showActivityNotice(`${name} joined the room`);
+  }
+  if(left && prevParts[left]){
+    const name = prevParts[left].name || 'Someone';
+    if(left !== me.id) showActivityNotice(`${name} left the room`);
+  }
 }
 
 function getActorName(state){
@@ -2722,6 +2591,8 @@ async function enterRoom(){
   refs.me.onDisconnect().remove();
   refs.myTyping.onDisconnect().remove();
 
+  usersSnapshotReady = false;
+  knownUserIds = new Set();
   document.getElementById('joinScreen').classList.remove('active');
   document.getElementById('roomScreen').classList.add('active');
   document.getElementById('roomCodeDisplay').textContent = me.roomId;
@@ -2735,6 +2606,7 @@ async function enterRoom(){
   listenPlayer();
   startSyncLoop();
   updateFullscreenButton();
+  syncFsUi();
 }
 
 function leaveRoom(){
@@ -2776,6 +2648,9 @@ function leaveRoom(){
   clearPlaybackSurface();
 
   document.getElementById('roomScreen').classList.remove('active', 'fs-active');
+  syncFsUi();
+  usersSnapshotReady = false;
+  knownUserIds = new Set();
   document.getElementById('joinScreen').classList.add('active');
   document.getElementById('msgsList').innerHTML = '';
   document.getElementById('partList').innerHTML = '';
@@ -2814,7 +2689,17 @@ function avatarSz(n){
 
 function listenUsers(){
   refs.users.on('value', snap=>{
-    parts = snap.val() || {};
+    const nextParts = snap.val() || {};
+    const prevParts = parts || {};
+    parts = nextParts;
+
+    if(usersSnapshotReady){
+      notifyUserDelta(prevParts, nextParts);
+    } else {
+      usersSnapshotReady = true;
+      knownUserIds = new Set(Object.keys(nextParts));
+    }
+
     renderParts();
     const n = Object.keys(parts).length;
     document.getElementById('watchCount').textContent = String(n);
@@ -3414,83 +3299,23 @@ function toggleCam(){
 }
 
 function toggleChat(){
-  const drawer = document.getElementById('chatDrawer');
-  if(!drawer || chatDrag.blockClick) return;
-
-  drawer.classList.toggle('open');
-  if(drawer.classList.contains('open')){
-    updateChatMinButton();
-    setTimeout(()=>{
-      const l=document.getElementById('msgsList');
-      l.scrollTop = l.scrollHeight;
-    },420);
-    return;
-  }
-
-  if(isFullscreenActive()){
-    const saved = loadChatDockPosition();
-    if(saved){
-      applyChatDock(saved.side, saved.x, saved.y, false);
-    } else {
-      resetChatDockPosition();
-    }
-  }
-  updateChatMinButton();
+  document.getElementById('chatDrawer').classList.toggle('open');
   setTimeout(()=>{
     const l=document.getElementById('msgsList');
     l.scrollTop = l.scrollHeight;
-  },120);
+  },420);
 }
 function closeChatIfOpen(){
-  const drawer = document.getElementById('chatDrawer');
-  if(!drawer) return;
-  drawer.classList.remove('open');
-  if(isFullscreenActive()){
-    const saved = loadChatDockPosition();
-    if(saved){
-      applyChatDock(saved.side, saved.x, saved.y, false);
-    } else {
-      resetChatDockPosition();
-    }
-  }
-  updateChatMinButton();
+  document.getElementById('chatDrawer').classList.remove('open');
 }
-
-function syncChatDockToFullscreenState(){
-  const drawer = document.getElementById('chatDrawer');
-  if(!drawer) return;
-
-  if(isFullscreenActive() && !drawer.classList.contains('open')){
-    const saved = loadChatDockPosition();
-    if(saved){
-      applyChatDock(saved.side, saved.x, saved.y, false);
-    } else {
-      applyChatDock('right', null, null, false);
-    }
-  } else if(!isFullscreenActive()){
-    drawer.classList.remove('dock-left', 'dock-right', 'dragging');
-    drawer.style.left = '';
-    drawer.style.top = '';
-    drawer.style.right = '';
-    drawer.style.bottom = '';
-  }
-
-  updateChatMinButton();
-}
-
-document.getElementById('chatDrawer')?.addEventListener('pointerdown', (e)=>{
-  if(!isChatDockMode()) return;
-  if(e.target.closest('.chat-field') || e.target.closest('.send-btn')) return;
-  beginChatDrag(e);
-});
 
 document.addEventListener('fullscreenchange', ()=>{
   const room = document.getElementById('roomScreen');
   const active = !!document.fullscreenElement;
   room?.classList.toggle('fs-active', active);
   document.body.classList.toggle('fs-active', active);
+  syncFsUi();
   updateFullscreenButton();
-  syncChatDockToFullscreenState();
   if(active){
     lockLandscapeOrientation();
   } else {
@@ -3506,7 +3331,6 @@ document.getElementById('volumeBar').value = '100';
 document.getElementById('seekBar').value = '0';
 renderCaptionPanel();
 updateFullscreenButton();
-syncChatDockToFullscreenState();
 </script>
 </body>
 </html>
