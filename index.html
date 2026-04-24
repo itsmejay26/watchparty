@@ -2599,7 +2599,6 @@ async function enterRoom(){
   document.getElementById('syncStateLabel').textContent = 'Connected';
   setBroadcastButton(false);
   document.getElementById('volumeBar').value = '100';
-  resetChatDockPosition();
 
   listenUsers();
   listenMessages();
@@ -2608,7 +2607,6 @@ async function enterRoom(){
   startSyncLoop();
   updateFullscreenButton();
   syncFsUi();
-  initChatDrag();
 }
 
 function leaveRoom(){
@@ -3332,7 +3330,6 @@ document.getElementById('videoUrlInput').addEventListener('keypress', e=>{
 document.getElementById('volumeBar').value = '100';
 document.getElementById('seekBar').value = '0';
 renderCaptionPanel();
-initChatDrag();
 updateFullscreenButton();
 </script>
 </body>
