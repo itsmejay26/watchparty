@@ -171,6 +171,34 @@ button, input, input[type="range"], .video-wrap, video, iframe {
 .video-empty .big-icon { font-size:36px; }
 .video-empty p { font-size:12px; }
 
+.broadcast-status-overlay {
+  position:absolute;
+  left:50%;
+  bottom:14px;
+  transform:translateX(-50%);
+  display:none;
+  align-items:center;
+  gap:8px;
+  padding:10px 14px;
+  border-radius:999px;
+  background:rgba(10,10,18,.88);
+  border:1px solid rgba(255,255,255,.14);
+  box-shadow:0 10px 24px rgba(0,0,0,.35);
+  backdrop-filter:blur(12px);
+  z-index:5;
+  font-size:12px;
+  color:var(--text);
+  white-space:nowrap;
+}
+.broadcast-status-overlay.show { display:flex; }
+.broadcast-status-overlay .pulse {
+  width:8px;
+  height:8px;
+  border-radius:50%;
+  background:var(--green);
+  animation:blink 1.2s infinite;
+}
+
 .url-bar {
   position:absolute; top:8px; left:8px; right:8px;
   display:flex; gap:6px; z-index:10;
@@ -661,6 +689,11 @@ button, input, input[type="range"], .video-wrap, video, iframe {
       <p>Paste a video link below to start</p>
     </div>
 
+    <div class="broadcast-status-overlay" id="broadcastStatusOverlay">
+      <span class="pulse"></span>
+      <span id="broadcastStatusText">Connecting to live stream…</span>
+    </div>
+
     <video id="mainVideo" playsinline class="hidden"></video>
     <div id="ytMount" class="hidden"></div>
     <iframe id="ttFrame" class="hidden" allowfullscreen allow="autoplay; fullscreen; encrypted-media; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin"></iframe>
@@ -812,6 +845,8 @@ let broadcastHostId = '';
 let broadcastActive = false;
 let broadcastSignalRef = null;
 let broadcastListenerReady = false;
+let broadcastRemoteReady = false;
+let broadcastStatusTimer = null;
 
 db.ref('.info/serverTimeOffset').on('value', snap => {
   serverOffset = snap.val() || 0;
@@ -971,6 +1006,15 @@ function setVisiblePlayer(type){
   if(type === 'broadcast') v.classList.remove('hidden');
 
   document.getElementById('videoEmpty').classList.toggle('hidden', type !== 'none');
+}
+
+function setBroadcastStatus(text, showOverlay = false){
+  const label = document.getElementById('syncStateLabel');
+  const overlay = document.getElementById('broadcastStatusOverlay');
+  const overlayText = document.getElementById('broadcastStatusText');
+  if(label) label.textContent = text;
+  if(overlayText) overlayText.textContent = text;
+  if(overlay) overlay.classList.toggle('show', !!showOverlay);
 }
 
 function parseVideoInput(raw){
@@ -1457,6 +1501,8 @@ function stopBroadcastListener(){
   if(broadcastSignalRef){
     try { broadcastSignalRef.off(); } catch(_) {}
   }
+  clearTimeout(broadcastStatusTimer);
+  broadcastStatusTimer = null;
   broadcastSignalRef = null;
   broadcastListenerReady = false;
 }
@@ -1502,6 +1548,7 @@ async function startScreenShare(stream){
   document.getElementById('videoEmpty').classList.add('hidden');
   v.srcObject = stream;
   v.muted = true;
+  v.autoplay = true;
   v.playsInline = true;
   try { await v.play(); } catch(_) {}
 
@@ -1526,6 +1573,7 @@ async function startScreenShare(stream){
   };
   pushRoomState(currentState, true);
   syncUiFromPlayer();
+  setBroadcastStatus('Stream live', false);
   ensureBroadcastListener();
   connectBroadcastToCurrentUsers();
   toast('Screen sharing started.');
@@ -1552,7 +1600,7 @@ async function stopScreenShare(){
     currentState = null;
     refs.player?.remove();
     document.getElementById('videoEmpty').classList.remove('hidden');
-    document.getElementById('syncStateLabel').textContent = 'Ready';
+    setBroadcastStatus('Ready', false);
     setVisiblePlayer('none');
   }
   toast('Screen sharing stopped.');
@@ -1580,6 +1628,17 @@ function makePeerConnection(remoteId, initiator){
 
   pc.onconnectionstatechange = () => {
     const state = pc.connectionState;
+    if(!initiator){
+      if(state === 'connecting'){
+        setBroadcastStatus('Connecting to live stream…', true);
+      } else if(state === 'connected' || state === 'completed'){
+        if(!broadcastRemoteReady){
+          setBroadcastStatus('Connected, waiting for video…', true);
+        }
+      } else if(state === 'failed' || state === 'closed' || state === 'disconnected'){
+        setBroadcastStatus('Reconnecting to live stream…', true);
+      }
+    }
     if(state === 'failed' || state === 'closed' || state === 'disconnected'){
       if(broadcastPeers[remoteId] === pc){
         try { pc.close(); } catch(_) {}
@@ -1592,12 +1651,15 @@ function makePeerConnection(remoteId, initiator){
     if(initiator) return;
     const stream = event.streams && event.streams[0];
     if(!stream) return;
+    broadcastRemoteReady = true;
+    setBroadcastStatus('Stream live', false);
     const v = videoEl();
     setVisiblePlayer('broadcast');
     document.getElementById('videoEmpty').classList.add('hidden');
     v.srcObject = stream;
-    v.muted = false;
+    v.muted = true;      // autoplay-friendly; users can unmute locally if needed
     v.playsInline = true;
+    v.autoplay = true;
     v.play().catch(()=>{});
   };
 
@@ -1608,7 +1670,7 @@ function makePeerConnection(remoteId, initiator){
 async function connectToViewer(remoteId){
   if(!broadcastStream || broadcastPeers[remoteId]) return;
   const pc = makePeerConnection(remoteId, true);
-  const offer = await pc.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: false });
+  const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
   broadcastSignalSend(remoteId, { type: 'offer', sdp: pc.localDescription });
 }
@@ -1616,9 +1678,10 @@ async function connectToViewer(remoteId){
 async function handleBroadcastSignal(fromId, payload){
   if(!payload || !payload.type) return;
 
-  if(payload.type === 'offer' && broadcastActive && broadcastHostId === me.id){
+  // Viewer side: receive the host's offer, answer it, and wait for the remote stream.
+  if(payload.type === 'offer' && broadcastActive && broadcastHostId !== me.id){
     let pc = broadcastPeers[fromId];
-    if(!pc) pc = makePeerConnection(fromId, true);
+    if(!pc) pc = makePeerConnection(fromId, false);
     await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
@@ -1626,13 +1689,16 @@ async function handleBroadcastSignal(fromId, payload){
     return;
   }
 
-  const pc = broadcastPeers[fromId];
-  if(!pc) return;
-
+  // Host side: receive viewer answers for the outgoing offers.
   if(payload.type === 'answer' && broadcastActive && broadcastHostId === me.id){
+    const pc = broadcastPeers[fromId];
+    if(!pc) return;
     await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
     return;
   }
+
+  const pc = broadcastPeers[fromId];
+  if(!pc) return;
 
   if(payload.type === 'candidate'){
     try { await pc.addIceCandidate(new RTCIceCandidate(payload.candidate)); } catch(_) {}
@@ -1651,13 +1717,25 @@ async function connectBroadcastToCurrentUsers(){
 function viewerJoinBroadcast(state){
   broadcastHostId = state.broadcastHostId || '';
   broadcastActive = !!state.broadcastActive;
+  broadcastRemoteReady = false;
   if(!broadcastActive || !broadcastHostId) return;
   ensureBroadcastListener();
   setBroadcastButton(false);
   if(broadcastHostId !== me.id){
     setVisiblePlayer('broadcast');
     document.getElementById('videoEmpty').classList.add('hidden');
-    // viewers wait for the host offer
+    setBroadcastStatus('Connecting to live stream…', true);
+    const v = videoEl();
+    v.muted = true;
+    v.autoplay = true;
+    v.playsInline = true;
+    clearTimeout(broadcastStatusTimer);
+    broadcastStatusTimer = setTimeout(()=>{
+      if(broadcastActive && broadcastHostId !== me.id && !broadcastRemoteReady){
+        setBroadcastStatus('Still connecting…', true);
+      }
+    }, 4500);
+    // viewers wait for the host offer, then the remote stream arrives via ontrack
   }
 }
 function ttPost(type, value = null){
@@ -2179,7 +2257,7 @@ function leaveRoom(){
   document.getElementById('roomCodeDisplay').textContent = '------';
   document.getElementById('watchCount').textContent = '1';
   document.getElementById('onlineBadge').textContent = '0 online';
-  document.getElementById('syncStateLabel').textContent = 'Ready';
+  setBroadcastStatus('Ready', false);
   document.getElementById('videoUrlInput').value = '';
   document.getElementById('seekBar').value = '0';
   document.getElementById('currentTimeLabel').textContent = '0:00';
@@ -2483,6 +2561,7 @@ function loadStateIntoUI(state){
       const v = videoEl();
       v.srcObject = broadcastStream;
       v.muted = true;
+      setBroadcastStatus('Stream live', false);
       v.play().catch(()=>{});
     } else {
       viewerJoinBroadcast(state);
@@ -2496,7 +2575,7 @@ function listenPlayer(){
   refs.player.on('value', snap=>{
     const state = snap.val();
     if(!state || !state.type){
-      document.getElementById('syncStateLabel').textContent = 'Ready';
+      setBroadcastStatus('Ready', false);
       return;
     }
 
