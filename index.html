@@ -841,6 +841,7 @@ let captionEnabled = false;
 let captionSource = 'none';
 let broadcastStream = null;
 let broadcastPeers = {};
+let broadcastPendingCandidates = {};
 let broadcastHostId = '';
 let broadcastActive = false;
 let broadcastSignalRef = null;
@@ -1471,6 +1472,23 @@ function cleanupBroadcastPeers(){
     try { pc.ontrack = null; pc.onicecandidate = null; pc.onconnectionstatechange = null; pc.close(); } catch(_) {}
   });
   broadcastPeers = {};
+  broadcastPendingCandidates = {};
+}
+
+function queueBroadcastCandidate(remoteId, candidate){
+  if(!remoteId || !candidate) return;
+  if(!broadcastPendingCandidates[remoteId]) broadcastPendingCandidates[remoteId] = [];
+  broadcastPendingCandidates[remoteId].push(candidate);
+}
+
+async function flushBroadcastCandidates(remoteId){
+  const pc = broadcastPeers[remoteId];
+  const queue = broadcastPendingCandidates[remoteId];
+  if(!pc || !queue || !queue.length) return;
+  const pending = queue.splice(0, queue.length);
+  for(const cand of pending){
+    try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch(_) {}
+  }
 }
 
 function broadcastSignalSend(targetId, payload){
@@ -1611,10 +1629,17 @@ function makePeerConnection(remoteId, initiator){
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' }
-    ]
+    ],
+    bundlePolicy: 'max-bundle',
+    rtcpMuxPolicy: 'require',
+    iceCandidatePoolSize: 4
   });
 
   if(initiator && broadcastStream){
+    try { pc.addTransceiver('video', { direction: 'sendonly' }); } catch(_) {}
+    if(broadcastStream.getAudioTracks().length){
+      try { pc.addTransceiver('audio', { direction: 'sendonly' }); } catch(_) {}
+    }
     broadcastStream.getTracks().forEach(track => {
       try { pc.addTrack(track, broadcastStream); } catch(_) {}
     });
@@ -1638,26 +1663,40 @@ function makePeerConnection(remoteId, initiator){
       } else if(state === 'failed' || state === 'closed' || state === 'disconnected'){
         setBroadcastStatus('Reconnecting to live stream…', true);
       }
+    } else if(state === 'failed' || state === 'disconnected'){
+      setTimeout(()=>{
+        if(broadcastActive && broadcastHostId === me.id && broadcastStream && broadcastPeers[remoteId] === pc){
+          try { pc.restartIce?.(); } catch(_) {}
+          connectToViewer(remoteId, true).catch(()=>{});
+        }
+      }, 900);
     }
+
     if(state === 'failed' || state === 'closed' || state === 'disconnected'){
       if(broadcastPeers[remoteId] === pc){
         try { pc.close(); } catch(_) {}
         delete broadcastPeers[remoteId];
+        delete broadcastPendingCandidates[remoteId];
       }
     }
   };
 
   pc.ontrack = (event) => {
     if(initiator) return;
-    const stream = event.streams && event.streams[0];
-    if(!stream) return;
+    const incoming = event.streams && event.streams[0] ? event.streams[0] : null;
+    const fallbackStream = incoming || (()=>{
+      const ms = new MediaStream();
+      try { if(event.track) ms.addTrack(event.track); } catch(_) {}
+      return ms;
+    })();
+    if(!fallbackStream) return;
     broadcastRemoteReady = true;
     setBroadcastStatus('Stream live', false);
     const v = videoEl();
     setVisiblePlayer('broadcast');
     document.getElementById('videoEmpty').classList.add('hidden');
-    v.srcObject = stream;
-    v.muted = true;      // autoplay-friendly; users can unmute locally if needed
+    v.srcObject = fallbackStream;
+    v.muted = true;
     v.playsInline = true;
     v.autoplay = true;
     v.play().catch(()=>{});
@@ -1667,8 +1706,14 @@ function makePeerConnection(remoteId, initiator){
   return pc;
 }
 
-async function connectToViewer(remoteId){
-  if(!broadcastStream || broadcastPeers[remoteId]) return;
+async function connectToViewer(remoteId, forceRecreate = false){
+  if(!broadcastStream) return;
+  if(forceRecreate && broadcastPeers[remoteId]){
+    try { broadcastPeers[remoteId].close(); } catch(_) {}
+    delete broadcastPeers[remoteId];
+    delete broadcastPendingCandidates[remoteId];
+  }
+  if(broadcastPeers[remoteId]) return;
   const pc = makePeerConnection(remoteId, true);
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
@@ -1678,29 +1723,30 @@ async function connectToViewer(remoteId){
 async function handleBroadcastSignal(fromId, payload){
   if(!payload || !payload.type) return;
 
-  // Viewer side: receive the host's offer, answer it, and wait for the remote stream.
+  let pc = broadcastPeers[fromId];
+
   if(payload.type === 'offer' && broadcastActive && broadcastHostId !== me.id){
-    let pc = broadcastPeers[fromId];
     if(!pc) pc = makePeerConnection(fromId, false);
     await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+    await flushBroadcastCandidates(fromId);
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     broadcastSignalSend(fromId, { type: 'answer', sdp: pc.localDescription });
     return;
   }
 
-  // Host side: receive viewer answers for the outgoing offers.
   if(payload.type === 'answer' && broadcastActive && broadcastHostId === me.id){
-    const pc = broadcastPeers[fromId];
     if(!pc) return;
     await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+    await flushBroadcastCandidates(fromId);
     return;
   }
 
-  const pc = broadcastPeers[fromId];
-  if(!pc) return;
-
   if(payload.type === 'candidate'){
+    if(!pc || !pc.remoteDescription){
+      queueBroadcastCandidate(fromId, payload.candidate);
+      return;
+    }
     try { await pc.addIceCandidate(new RTCIceCandidate(payload.candidate)); } catch(_) {}
   }
 }
