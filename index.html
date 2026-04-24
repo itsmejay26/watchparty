@@ -455,6 +455,8 @@ button, input, input[type="range"], .video-wrap, video, iframe {
 .ctrl.on    { background:rgba(91,141,239,.2); border:1px solid rgba(91,141,239,.3); color:var(--accent); }
 .ctrl.off   { background:rgba(255,255,255,.07); color:var(--red); }
 .ctrl.leave { background:var(--red); }
+.ctrl.share { background:rgba(234,179,8,.18); color:#ffd86b; }
+.ctrl.share.active { background:rgba(234,179,8,.28); color:#fff2b0; }
 
 .chat-drawer {
   position:fixed; bottom:0; left:0; right:0;
@@ -716,6 +718,9 @@ button, input, input[type="range"], .video-wrap, video, iframe {
   </div>
 
   <div class="controls-row">
+    <button id="shareBtn" class="ctrl share" onclick="toggleScreenShare()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 5 17 10"/><line x1="12" x2="12" y1="5" y2="16"/></svg>
+    </button>
     <button class="ctrl leave" onclick="leaveRoom()">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
     </button>
@@ -801,6 +806,12 @@ let selectedCaptionIndex = -1;
 let lastCaptionIndex = -1;
 let captionEnabled = false;
 let captionSource = 'none';
+let broadcastStream = null;
+let broadcastPeers = {};
+let broadcastHostId = '';
+let broadcastActive = false;
+let broadcastSignalRef = null;
+let broadcastListenerReady = false;
 
 db.ref('.info/serverTimeOffset').on('value', snap => {
   serverOffset = snap.val() || 0;
@@ -957,6 +968,7 @@ function setVisiblePlayer(type){
   if(type === 'direct') v.classList.remove('hidden');
   if(type === 'youtube') y.classList.remove('hidden');
   if(type === 'tiktok' || type === 'instagram' || type === 'facebook' || type === 'bilibili') t.classList.remove('hidden');
+  if(type === 'broadcast') v.classList.remove('hidden');
 
   document.getElementById('videoEmpty').classList.toggle('hidden', type !== 'none');
 }
@@ -972,7 +984,7 @@ function parseVideoInput(raw){
   if(fbInfo.id) return { type:'facebook', url, videoId:fbInfo.id, fbUrl:fbInfo.href, fbMode:fbInfo.mode || 'video', startAt:0 };
 
   const biliInfo = extractBilibiliInfo(url);
-  if(biliInfo.id || biliInfo.playUrl) return { type:'bilibili', url, videoId:biliInfo.id || '', biliPage:biliInfo.page || 1, biliMode:biliInfo.mode || 'video', biliUrl:biliInfo.playUrl || '', startAt:0 };
+  if(biliInfo.id) return { type:'bilibili', url, videoId:biliInfo.id, biliPage:biliInfo.page || 1, startAt:0 };
 
   const ttId = extractTikTokId(url);
   if(ttId) return { type:'tiktok', url, videoId:ttId, startAt:0 };
@@ -1042,42 +1054,27 @@ function extractFacebookInfo(url){
 
 function extractBilibiliInfo(url){
   const patterns = [
-    { mode:'video', re:/bilibili\.com\/video\/(BV[0-9A-Za-z]+)/i },
-    { mode:'video', re:/bilibili\.com\/video\/av(\d+)/i },
-    { mode:'video', re:/bilibili\.com\/video\/?\?bvid=(BV[0-9A-Za-z]+)/i },
-    { mode:'video', re:/player\.bilibili\.com\/player\.html\?[^#]*bvid=(BV[0-9A-Za-z]+)/i },
-    { mode:'video', re:/player\.bilibili\.com\/player\.html\?[^#]*aid=(\d+)/i },
-    { mode:'play',  re:/bilibili\.tv\/(?:[a-z]{2}\/)?play\/(\d+)(?:\/(\d+))?/i },
-    { mode:'play',  re:/tv\.bilibili\.tv\/(?:[a-z]{2}\/)?play\/(\d+)(?:\/(\d+))?/i },
-    { mode:'video', re:/bilibili\.tv\/(?:[a-z]{2}\/)?video\/(\d+)/i },
-    { mode:'video', re:/tv\.bilibili\.tv\/(?:[a-z]{2}\/)?video\/(\d+)/i }
+    /bilibili\.com\/video\/(BV[0-9A-Za-z]+)/i,
+    /bilibili\.com\/video\/av(\d+)/i,
+    /bilibili\.com\/video\/?\?bvid=(BV[0-9A-Za-z]+)/i,
+    /player\.bilibili\.com\/player\.html\?[^#]*bvid=(BV[0-9A-Za-z]+)/i,
+    /player\.bilibili\.com\/player\.html\?[^#]*aid=(\d+)/i
   ];
   for(const p of patterns){
-    const m = url.match(p.re);
+    const m = url.match(p);
     if(m){
-      if(p.mode === 'play'){
-        return { id:'', page:Number(m[2] || 1) || 1, mode:'play', playUrl:url };
-      }
-      if(/^av\d+$/i.test(m[1])) return { id:m[1], page:1, mode:'video' };
-      return { id:m[1], page:1, mode:'video' };
+      if(/^av\d+$/i.test(m[1])) return { id:m[1], page:1 };
+      return { id:m[1], page:1 };
     }
   }
   try {
     const parsed = new URL(url);
-    const host = parsed.hostname.replace(/^www\./i, '').toLowerCase();
-    if(host.includes('bilibili.tv')){
-      const path = parsed.pathname || '';
-      const playMatch = path.match(/\/play\/(\d+)(?:\/(\d+))?/i);
-      if(playMatch) return { id:'', page:Number(playMatch[2] || 1) || 1, mode:'play', playUrl:url };
-      const videoMatch = path.match(/\/video\/(\d+)/i);
-      if(videoMatch) return { id:videoMatch[1], page:1, mode:'video' };
-    }
     const bvid = parsed.searchParams.get('bvid') || '';
-    if(bvid) return { id:bvid, page:Number(parsed.searchParams.get('p') || parsed.searchParams.get('page') || 1) || 1, mode:'video' };
+    if(bvid) return { id:bvid, page:Number(parsed.searchParams.get('p') || parsed.searchParams.get('page') || 1) || 1 };
     const aid = parsed.searchParams.get('aid') || '';
-    if(aid) return { id:'av'+aid, page:Number(parsed.searchParams.get('p') || parsed.searchParams.get('page') || 1) || 1, mode:'video' };
+    if(aid) return { id:'av'+aid, page:Number(parsed.searchParams.get('p') || parsed.searchParams.get('page') || 1) || 1 };
   } catch(_) {}
-  return { id:'', page:1, mode:'video' };
+  return { id:'', page:1 };
 }
 
 function extractInstagramInfo(url){
@@ -1159,8 +1156,6 @@ function sameMeaningfulState(a, b){
     a.videoId === b.videoId &&
     (a.socialKind || 'reel') === (b.socialKind || 'reel') &&
     (a.fbMode || 'video') === (b.fbMode || 'video') &&
-    (a.biliMode || 'video') === (b.biliMode || 'video') &&
-    (a.biliUrl || '') === (b.biliUrl || '') &&
     Number(a.biliPage || 1) === Number(b.biliPage || 1) &&
     a.playing === b.playing &&
     Math.abs(Number(a.currentTime || 0) - Number(b.currentTime || 0)) < 0.35 &&
@@ -1356,7 +1351,7 @@ function buildTikTokSrc(id, autoplay){
 
 function buildFacebookSrc(href, autoplay = false, mode = 'video'){
   const target = encodeURIComponent(href);
-  const common = `show_text=0&autoplay=${autoplay ? 1 : 0}`;
+  const common = `show_text=0&autoplay=${autoplay ? 1 : 0}&width=100%`;
   if(mode === 'post'){
     return `https://www.facebook.com/plugins/post.php?href=${target}&${common}`;
   }
@@ -1369,18 +1364,7 @@ function loadFacebookFrame(href, autoplay = false, mode = 'video'){
   resetCaptionUI();
 }
 
-function buildBilibiliSrc(id, page = 1, autoplay = false, startAt = 0, mode = 'video', playUrl = ''){
-  if(mode === 'play'){
-    try {
-      const u = new URL(playUrl || id);
-      if(autoplay) u.searchParams.set('autoplay', '1');
-      if(startAt && Number(startAt) > 0) u.searchParams.set('t', String(Math.floor(startAt)));
-      return u.toString();
-    } catch(_) {
-      return playUrl || id;
-    }
-  }
-
+function buildBilibiliSrc(id, page = 1, autoplay = false, startAt = 0){
   const videoId = String(id || '').trim();
   const safePage = Number(page) > 0 ? Number(page) : 1;
   const params = new URLSearchParams({
@@ -1398,10 +1382,10 @@ function buildBilibiliSrc(id, page = 1, autoplay = false, startAt = 0, mode = 'v
   }
   return `https://player.bilibili.com/player.html?${params.toString()}`;
 }
-function loadBilibiliFrame(id, page = 1, autoplay = false, startAt = 0, mode = 'video', playUrl = ''){
+function loadBilibiliFrame(id, page = 1, autoplay = false, startAt = 0){
   setVisiblePlayer('bilibili');
   document.getElementById('videoEmpty').classList.add('hidden');
-  document.getElementById('ttFrame').src = buildBilibiliSrc(id, page, autoplay, startAt, mode, playUrl);
+  document.getElementById('ttFrame').src = buildBilibiliSrc(id, page, autoplay, startAt);
   resetCaptionUI();
 }
 
@@ -1423,6 +1407,258 @@ function loadInstagramFrame(id, kind = 'reel'){
   document.getElementById('videoEmpty').classList.add('hidden');
   document.getElementById('ttFrame').src = buildInstagramSrc(currentSocialKind, id);
   renderCaptionPanel();
+}
+
+
+function hasBroadcastSupport(){
+  return !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia && window.RTCPeerConnection);
+}
+
+function broadcastSignalsBase(){
+  return db.ref(`rooms/${me.roomId}/broadcastSignals`);
+}
+
+function broadcastPeerId(remoteId){
+  return `pc_${me.id}__${remoteId}`;
+}
+
+function cleanupBroadcastPeers(){
+  Object.entries(broadcastPeers).forEach(([remoteId, pc]) => {
+    try { pc.ontrack = null; pc.onicecandidate = null; pc.onconnectionstatechange = null; pc.close(); } catch(_) {}
+  });
+  broadcastPeers = {};
+}
+
+function broadcastSignalSend(targetId, payload){
+  if(!me.roomId) return;
+  const ref = broadcastSignalsBase().child(targetId).push();
+  ref.set({
+    from: me.id,
+    target: targetId,
+    payload,
+    ts: firebase.database.ServerValue.TIMESTAMP
+  });
+  ref.onDisconnect().remove();
+}
+
+function ensureBroadcastListener(){
+  if(broadcastListenerReady || !refs.room || !me.roomId) return;
+  broadcastListenerReady = true;
+  broadcastSignalRef = broadcastSignalsBase().child(me.id);
+  broadcastSignalRef.limitToLast(100).on('child_added', snap => {
+    const msg = snap.val();
+    snap.ref.remove().catch?.(()=>{});
+    if(!msg || !msg.from || !msg.payload) return;
+    handleBroadcastSignal(msg.from, msg.payload);
+  });
+}
+
+function stopBroadcastListener(){
+  if(broadcastSignalRef){
+    try { broadcastSignalRef.off(); } catch(_) {}
+  }
+  broadcastSignalRef = null;
+  broadcastListenerReady = false;
+}
+
+function setBroadcastButton(active){
+  const btn = document.getElementById('shareBtn');
+  if(!btn) return;
+  btn.classList.toggle('active', !!active);
+  btn.title = active ? 'Stop sharing' : 'Share screen or browser tab';
+}
+
+async function toggleScreenShare(){
+  if(broadcastActive){
+    await stopScreenShare();
+    return;
+  }
+  if(!hasBroadcastSupport()){
+    toast('Your browser does not support screen sharing.');
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: 30 },
+      audio: true
+    });
+    await startScreenShare(stream);
+  } catch(err){
+    toast('Screen share was cancelled or blocked.');
+  }
+}
+
+async function startScreenShare(stream){
+  stopBroadcastListener();
+  cleanupBroadcastPeers();
+
+  broadcastStream = stream;
+  broadcastActive = true;
+  broadcastHostId = me.id;
+  setBroadcastButton(true);
+
+  const v = videoEl();
+  setVisiblePlayer('broadcast');
+  document.getElementById('videoEmpty').classList.add('hidden');
+  v.srcObject = stream;
+  v.muted = true;
+  v.playsInline = true;
+  try { await v.play(); } catch(_) {}
+
+  stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+    stopScreenShare();
+  });
+
+  currentType = 'broadcast';
+  currentUrl = 'screen-share';
+  currentVideoId = 'broadcast';
+  currentState = {
+    type: 'broadcast',
+    url: 'screen-share',
+    videoId: 'broadcast',
+    broadcastHostId: me.id,
+    broadcastActive: true,
+    playing: true,
+    currentTime: 0,
+    volume: 0,
+    by: me.id,
+    updatedAt: serverNow()
+  };
+  pushRoomState(currentState, true);
+  syncUiFromPlayer();
+  ensureBroadcastListener();
+  connectBroadcastToCurrentUsers();
+  toast('Screen sharing started.');
+}
+
+async function stopScreenShare(){
+  broadcastActive = false;
+  setBroadcastButton(false);
+  cleanupBroadcastPeers();
+  stopBroadcastListener();
+
+  if(broadcastStream){
+    try { broadcastStream.getTracks().forEach(t => t.stop()); } catch(_) {}
+    broadcastStream = null;
+  }
+
+  const v = videoEl();
+  try { v.pause(); v.srcObject = null; } catch(_) {}
+
+  if(currentType === 'broadcast'){
+    currentType = 'none';
+    currentUrl = '';
+    currentVideoId = '';
+    currentState = null;
+    refs.player?.remove();
+    document.getElementById('videoEmpty').classList.remove('hidden');
+    document.getElementById('syncStateLabel').textContent = 'Ready';
+    setVisiblePlayer('none');
+  }
+  toast('Screen sharing stopped.');
+}
+
+function makePeerConnection(remoteId, initiator){
+  const pc = new RTCPeerConnection({
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' }
+    ]
+  });
+
+  if(initiator && broadcastStream){
+    broadcastStream.getTracks().forEach(track => {
+      try { pc.addTrack(track, broadcastStream); } catch(_) {}
+    });
+  }
+
+  pc.onicecandidate = (event) => {
+    if(event.candidate){
+      broadcastSignalSend(remoteId, { type: 'candidate', candidate: event.candidate });
+    }
+  };
+
+  pc.onconnectionstatechange = () => {
+    const state = pc.connectionState;
+    if(state === 'failed' || state === 'closed' || state === 'disconnected'){
+      if(broadcastPeers[remoteId] === pc){
+        try { pc.close(); } catch(_) {}
+        delete broadcastPeers[remoteId];
+      }
+    }
+  };
+
+  pc.ontrack = (event) => {
+    if(initiator) return;
+    const stream = event.streams && event.streams[0];
+    if(!stream) return;
+    const v = videoEl();
+    setVisiblePlayer('broadcast');
+    document.getElementById('videoEmpty').classList.add('hidden');
+    v.srcObject = stream;
+    v.muted = false;
+    v.playsInline = true;
+    v.play().catch(()=>{});
+  };
+
+  broadcastPeers[remoteId] = pc;
+  return pc;
+}
+
+async function connectToViewer(remoteId){
+  if(!broadcastStream || broadcastPeers[remoteId]) return;
+  const pc = makePeerConnection(remoteId, true);
+  const offer = await pc.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: false });
+  await pc.setLocalDescription(offer);
+  broadcastSignalSend(remoteId, { type: 'offer', sdp: pc.localDescription });
+}
+
+async function handleBroadcastSignal(fromId, payload){
+  if(!payload || !payload.type) return;
+
+  if(payload.type === 'offer' && broadcastActive && broadcastHostId === me.id){
+    let pc = broadcastPeers[fromId];
+    if(!pc) pc = makePeerConnection(fromId, true);
+    await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    broadcastSignalSend(fromId, { type: 'answer', sdp: pc.localDescription });
+    return;
+  }
+
+  const pc = broadcastPeers[fromId];
+  if(!pc) return;
+
+  if(payload.type === 'answer' && broadcastActive && broadcastHostId === me.id){
+    await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+    return;
+  }
+
+  if(payload.type === 'candidate'){
+    try { await pc.addIceCandidate(new RTCIceCandidate(payload.candidate)); } catch(_) {}
+  }
+}
+
+async function connectBroadcastToCurrentUsers(){
+  if(!broadcastActive || broadcastHostId !== me.id) return;
+  Object.keys(parts).forEach(uid => {
+    if(uid !== me.id){
+      connectToViewer(uid).catch(()=>{});
+    }
+  });
+}
+
+function viewerJoinBroadcast(state){
+  broadcastHostId = state.broadcastHostId || '';
+  broadcastActive = !!state.broadcastActive;
+  if(!broadcastActive || !broadcastHostId) return;
+  ensureBroadcastListener();
+  setBroadcastButton(false);
+  if(broadcastHostId !== me.id){
+    setVisiblePlayer('broadcast');
+    document.getElementById('videoEmpty').classList.add('hidden');
+    // viewers wait for the host offer
+  }
 }
 function ttPost(type, value = null){
   const f = document.getElementById('ttFrame');
@@ -1876,6 +2112,7 @@ async function enterRoom(){
   document.getElementById('roomScreen').classList.add('active');
   document.getElementById('roomCodeDisplay').textContent = me.roomId;
   document.getElementById('syncStateLabel').textContent = 'Connected';
+  setBroadcastButton(false);
   document.getElementById('volumeBar').value = '100';
 
   listenUsers();
@@ -1910,6 +2147,15 @@ function leaveRoom(){
   pendingYTApply = null;
   captionPanelOpen = false;
   resetCaptionUI();
+  broadcastActive = false;
+  broadcastHostId = '';
+  setBroadcastButton(false);
+  cleanupBroadcastPeers();
+  stopBroadcastListener();
+  if(broadcastStream){
+    try { broadcastStream.getTracks().forEach(t => t.stop()); } catch(_) {}
+    broadcastStream = null;
+  }
 
   if(hlsInstance){ hlsInstance.destroy(); hlsInstance = null; }
   if(ytPlayer){
@@ -1965,6 +2211,10 @@ function listenUsers(){
     const n = Object.keys(parts).length;
     document.getElementById('watchCount').textContent = String(n);
     document.getElementById('onlineBadge').textContent = `${n} online`;
+
+    if(broadcastActive && broadcastHostId === me.id){
+      connectBroadcastToCurrentUsers().catch(()=>{});
+    }
   });
 }
 
@@ -2208,7 +2458,7 @@ function loadStateIntoUI(state){
   }
 
   if(state.type === 'bilibili'){
-    loadBilibiliFrame(state.videoId, Number(state.biliPage || 1) || 1, !!state.playing, getLiveTargetTime(state), state.biliMode || 'video', state.biliUrl || state.url || '');
+    loadBilibiliFrame(state.videoId, Number(state.biliPage || 1) || 1, !!state.playing, getLiveTargetTime(state));
     setVisiblePlayer('bilibili');
     resetCaptionUI();
     syncUiFromPlayer();
@@ -2218,6 +2468,25 @@ function loadStateIntoUI(state){
     currentSocialKind = state.socialKind || 'reel';
     loadInstagramFrame(state.videoId, currentSocialKind);
     setVisiblePlayer('instagram');
+    resetCaptionUI();
+    syncUiFromPlayer();
+  }
+
+  if(state.type === 'broadcast'){
+    currentVideoId = 'broadcast';
+    currentUrl = state.url || 'screen-share';
+    broadcastHostId = state.broadcastHostId || '';
+    broadcastActive = !!state.broadcastActive;
+    setBroadcastButton(broadcastActive && broadcastHostId === me.id);
+    if(broadcastHostId === me.id && broadcastStream){
+      setVisiblePlayer('broadcast');
+      const v = videoEl();
+      v.srcObject = broadcastStream;
+      v.muted = true;
+      v.play().catch(()=>{});
+    } else {
+      viewerJoinBroadcast(state);
+    }
     resetCaptionUI();
     syncUiFromPlayer();
   }
@@ -2260,9 +2529,9 @@ function pushStateFromLocal(force = false){
     fbUrl: currentState?.fbUrl || '',
     fbMode: currentState?.fbMode || 'video',
     biliPage: currentState?.biliPage || 1,
-    biliMode: currentState?.biliMode || 'video',
-    biliUrl: currentState?.biliUrl || '',
     socialKind: currentSocialKind,
+    broadcastHostId: broadcastHostId || currentState?.broadcastHostId || '',
+    broadcastActive: broadcastActive,
     playing: isPlaying(),
     currentTime: getCurrentTime(),
     volume: getVolume()
@@ -2340,7 +2609,7 @@ function loadVideo(){
     loadFacebookFrame(parsed.fbUrl || parsed.url, true, parsed.fbMode || 'video');
   } else if(parsed.type === 'bilibili'){
     resetCaptionUI();
-    loadBilibiliFrame(parsed.videoId, parsed.biliPage || 1, true, parsed.startAt || 0, parsed.biliMode || 'video', parsed.biliUrl || parsed.url || '');
+    loadBilibiliFrame(parsed.videoId, parsed.biliPage || 1, true, parsed.startAt || 0);
   } else if(parsed.type === 'tiktok'){
     resetCaptionUI();
     loadTikTokFrame(parsed.videoId, true);
@@ -2348,6 +2617,8 @@ function loadVideo(){
     resetCaptionUI();
     currentSocialKind = parsed.socialKind || 'reel';
     loadInstagramFrame(parsed.videoId, currentSocialKind);
+  } else if(parsed.type === 'broadcast'){
+    toast('Use the Share Screen button for your own device video.');
   }
 
   currentState = {
@@ -2357,8 +2628,6 @@ function loadVideo(){
     fbUrl: parsed.fbUrl || '',
     fbMode: parsed.fbMode || 'video',
     biliPage: parsed.biliPage || 1,
-    biliMode: parsed.biliMode || 'video',
-    biliUrl: parsed.biliUrl || '',
     socialKind: parsed.socialKind || currentSocialKind || 'reel',
     playing: parsed.type === 'direct' || parsed.type === 'youtube' || parsed.type === 'tiktok' || parsed.type === 'facebook' || parsed.type === 'bilibili',
     currentTime: 0,
@@ -2378,7 +2647,7 @@ function playVideo(){
   if(currentType === 'youtube' && ytPlayer && ytReady) ytPlayer.playVideo();
   if(currentType === 'tiktok') ttPost('play');
   if(currentType === 'facebook') loadFacebookFrame(currentState?.fbUrl || currentUrl, true, currentState?.fbMode || 'video');
-  if(currentType === 'bilibili') loadBilibiliFrame(currentVideoId, currentState?.biliPage || 1, true, getCurrentTime(), currentState?.biliMode || 'video', currentState?.biliUrl || currentUrl || '');
+  if(currentType === 'bilibili') loadBilibiliFrame(currentVideoId, currentState?.biliPage || 1, true, getCurrentTime());
   if(currentType === 'instagram') toast('Instagram embeds do not support remote play controls.');
 
   pushStateFromLocal(true);
@@ -2414,7 +2683,7 @@ function seekBy(sec){
   } else if(currentType === 'facebook'){
     toast('Facebook embeds do not support seeking.');
   } else if(currentType === 'bilibili'){
-    loadBilibiliFrame(currentVideoId, currentState?.biliPage || 1, true, target, currentState?.biliMode || 'video', currentState?.biliUrl || currentUrl || '');
+    loadBilibiliFrame(currentVideoId, currentState?.biliPage || 1, true, target);
   } else if(currentType === 'instagram'){
     toast('Instagram embeds do not support seeking.');
   }
