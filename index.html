@@ -568,6 +568,28 @@ button, input, input[type="range"], .video-wrap, video, iframe {
   box-shadow:0 6px 20px rgba(0,0,0,.4);
 }
 .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+.chat-min-btn {
+  position:fixed;
+  right:16px;
+  bottom:16px;
+  width:46px;
+  height:46px;
+  border:none;
+  border-radius:50%;
+  background:rgba(13,13,22,.96);
+  border:1px solid rgba(255,255,255,.12);
+  box-shadow:0 14px 28px rgba(0,0,0,.32);
+  color:#fff;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  z-index:9999;
+  cursor:pointer;
+  backdrop-filter:blur(12px);
+}
+.chat-min-btn svg { width:18px; height:18px; }
+.chat-min-btn:active { transform:scale(.94); }
 .hidden { display:none !important; }
 
 /* ON-SCREEN CHAT BUBBLE OVERLAY */
@@ -610,6 +632,154 @@ button, input, input[type="range"], .video-wrap, video, iframe {
 @keyframes floatIn {
   from { opacity:0; transform:translateY(10px) scale(.97); }
   to   { opacity:1; transform:translateY(0) scale(1); }
+}
+
+
+.activity-notice {
+  position:fixed;
+  top:14px;
+  left:50%;
+  transform:translateX(-50%) translateY(-10px);
+  z-index:99999;
+  background:rgba(15,15,28,.96);
+  border:1px solid rgba(255,255,255,.12);
+  box-shadow:0 14px 38px rgba(0,0,0,.35);
+  color:var(--text);
+  padding:10px 14px;
+  border-radius:999px;
+  font-size:13px;
+  max-width:min(92vw, 520px);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .22s ease, transform .22s ease;
+}
+.activity-notice.show {
+  opacity:1;
+  transform:translateX(-50%) translateY(0);
+}
+
+#roomScreen.fs-active {
+  position:fixed;
+  inset:0;
+  z-index:9998;
+  background:#000;
+  overflow:hidden;
+}
+#roomScreen.fs-active .topbar,
+#roomScreen.fs-active .controls-panel,
+#roomScreen.fs-active .info-bar,
+#roomScreen.fs-active .participants-wrap,
+#roomScreen.fs-active .controls-row {
+  display:none !important;
+}
+#roomScreen.fs-active .video-wrap {
+  position:fixed;
+  inset:0;
+  width:100vw;
+  height:100dvh !important;
+  min-height:100dvh;
+  max-height:100dvh;
+  border:none;
+  border-radius:0;
+  z-index:2;
+}
+#roomScreen.fs-active #floatingBubbles {
+  padding:12px 12px 140px 12px;
+  z-index:4;
+}
+#roomScreen.fs-active .toast {
+  z-index:99999;
+}
+#roomScreen.fs-active .chat-drawer {
+  position:fixed;
+  left:auto;
+  right:12px;
+  bottom:12px;
+  top:auto;
+  width:min(380px, calc(100vw - 24px));
+  z-index:8;
+  border-radius:24px;
+  box-shadow:0 20px 50px rgba(0,0,0,.45);
+  touch-action:none;
+  user-select:none;
+  -webkit-user-select:none;
+}
+#roomScreen.fs-active .chat-drawer.dock-left {
+  left:12px;
+  right:auto;
+}
+#roomScreen.fs-active .chat-drawer.dock-right {
+  right:12px;
+  left:auto;
+}
+#roomScreen.fs-active .chat-drawer.dragging {
+  transition:none !important;
+  cursor:grabbing;
+}
+#roomScreen.fs-active .chat-drawer:not(.open) {
+  width:64px;
+  height:64px;
+  border-radius:50%;
+  overflow:hidden;
+  padding:0;
+  background:rgba(13,13,22,.96);
+}
+#roomScreen.fs-active .chat-drawer:not(.open) .drawer-handle {
+  height:64px;
+  justify-content:center;
+  cursor:grab;
+}
+#roomScreen.fs-active .chat-drawer:not(.open) .handle-pill,
+#roomScreen.fs-active .chat-drawer:not(.open) .handle-label,
+#roomScreen.fs-active .chat-drawer:not(.open) .handle-chevron,
+#roomScreen.fs-active .chat-drawer:not(.open) .msgs-list,
+#roomScreen.fs-active .chat-drawer:not(.open) .chat-input-row {
+  display:none !important;
+}
+#roomScreen.fs-active .chat-drawer:not(.open) .drawer-handle::before {
+  content:'💬';
+  font-size:24px;
+  line-height:1;
+}
+#roomScreen.fs-active .chat-drawer.open {
+  height:min(52dvh, 420px);
+}
+#roomScreen.fs-active .chat-drawer.open .msgs-list,
+#roomScreen.fs-active .chat-drawer.open .chat-input-row {
+  opacity:1;
+  pointer-events:auto;
+}
+#roomScreen.fs-active .chat-drawer.open .drawer-handle {
+  height:56px;
+  cursor:grab;
+}
+#roomScreen.fs-active .chat-min-btn {
+  display:flex;
+}
+#roomScreen.fs-active .chat-min-btn.show {
+  opacity:1;
+  pointer-events:auto;
+}
+#roomScreen.fs-active .ctrl.fs {
+  background:rgba(91,141,239,.2);
+  color:#c8daff;
+}
+#roomScreen.fs-active .ctrl.fs.active {
+  background:rgba(91,141,239,.32);
+  color:#fff;
+}
+
+@media (orientation: portrait) and (max-width: 900px) {
+  #roomScreen.fs-active .video-wrap {
+    width:100dvh;
+    height:100dvw !important;
+    left:50%;
+    top:50%;
+    transform:translate(-50%, -50%);
+  }
 }
 
 @media (max-height: 820px) {
@@ -754,13 +924,18 @@ button, input, input[type="range"], .video-wrap, video, iframe {
     <button id="shareBtn" class="ctrl share" onclick="toggleScreenShare()">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 5 17 10"/><line x1="12" x2="12" y1="5" y2="16"/></svg>
     </button>
+    <button id="fsBtn" class="ctrl fs" onclick="toggleFullscreenMode()" title="Fullscreen">
+      <svg id="fsIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
+      </svg>
+    </button>
     <button class="ctrl leave" onclick="leaveRoom()">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
     </button>
   </div>
 
   <div class="chat-drawer" id="chatDrawer">
-    <div class="drawer-handle" onclick="toggleChat()">
+    <div class="drawer-handle" id="chatHandle" onclick="toggleChat()">
       <div class="handle-pill"></div>
       <span class="handle-label">Group Chat <span class="online-badge" id="onlineBadge">0 online</span></span>
       <svg class="handle-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
@@ -774,7 +949,14 @@ button, input, input[type="range"], .video-wrap, video, iframe {
     </div>
   </div>
 
+  <button class="chat-min-btn" id="chatMinBtn" onclick="closeChatIfOpen()" aria-label="Minimize chat" title="Minimize chat">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 12h16"/>
+    </svg>
+  </button>
+
   <div id="floatingBubbles"></div>
+  <div class="activity-notice" id="activityNotice"></div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -874,6 +1056,314 @@ function fmt(s){
   return `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
 }
 function videoEl(){ return document.getElementById('mainVideo'); }
+
+function clearPlaybackSurface(){
+  const v = videoEl();
+  try { v.pause(); } catch(_) {}
+  try {
+    v.removeAttribute('src');
+    v.srcObject = null;
+    v.load();
+  } catch(_) {}
+
+  const ytMount = document.getElementById('ytMount');
+  if(ytMount) ytMount.innerHTML = '';
+
+  const ttFrame = document.getElementById('ttFrame');
+  if(ttFrame) ttFrame.src = 'about:blank';
+
+  if(hlsInstance){
+    try { hlsInstance.destroy(); } catch(_) {}
+    hlsInstance = null;
+  }
+
+  if(ytPlayer){
+    try { ytPlayer.destroy(); } catch(_) {}
+    ytPlayer = null;
+    ytReady = false;
+  }
+
+  pendingYTApply = null;
+  pendingTTApply = null;
+}
+
+function isFullscreenActive(){
+  const room = document.getElementById('roomScreen');
+  return !!(document.fullscreenElement || room?.classList.contains('fs-active'));
+}
+
+async function lockLandscapeOrientation(){
+  try {
+    if(screen.orientation?.lock){
+      await screen.orientation.lock('landscape');
+    }
+  } catch(_) {}
+}
+
+async function unlockOrientation(){
+  try {
+    if(screen.orientation?.unlock){
+      screen.orientation.unlock();
+    }
+  } catch(_) {}
+}
+
+async function enterFullscreenMode(){
+  const room = document.getElementById('roomScreen');
+  if(!room) return;
+
+  room.classList.add('fs-active');
+  document.body.classList.add('fs-active');
+
+  try {
+    if(!document.fullscreenElement && room.requestFullscreen){
+      await room.requestFullscreen({ navigationUI: 'hide' });
+    }
+  } catch(_) {}
+
+  await lockLandscapeOrientation();
+  setTimeout(()=>{
+    document.getElementById('chatDrawer')?.classList.remove('open');
+  }, 80);
+  toast('Fullscreen on');
+  updateFullscreenButton();
+}
+
+async function exitFullscreenMode(){
+  const room = document.getElementById('roomScreen');
+  room?.classList.remove('fs-active');
+  document.body.classList.remove('fs-active');
+
+  try {
+    if(document.fullscreenElement && document.exitFullscreen){
+      await document.exitFullscreen();
+    }
+  } catch(_) {}
+
+  await unlockOrientation();
+  toast('Fullscreen off');
+  updateFullscreenButton();
+}
+
+async function toggleFullscreenMode(){
+  if(isFullscreenActive()){
+    await exitFullscreenMode();
+  } else {
+    await enterFullscreenMode();
+  }
+}
+
+function updateFullscreenButton(){
+  const btn = document.getElementById('fsBtn');
+  if(!btn) return;
+  const active = isFullscreenActive();
+  btn.classList.toggle('active', active);
+  btn.title = active ? 'Exit fullscreen' : 'Fullscreen';
+}
+
+function updateChatMinButton(){
+  const btn = document.getElementById('chatMinBtn');
+  if(!btn) return;
+  const drawer = document.getElementById('chatDrawer');
+  const show = !!(drawer && isFullscreenActive() && drawer.classList.contains('open'));
+  btn.classList.toggle('show', show);
+  btn.style.display = show ? 'flex' : 'none';
+}
+
+function getChatDockStorageKey(){
+  return `watchparty_chatdock_${me.roomId || 'global'}`;
+}
+
+function loadChatDockPosition(){
+  try {
+    const raw = localStorage.getItem(getChatDockStorageKey());
+    if(!raw) return null;
+    const data = JSON.parse(raw);
+    if(!data || !['left','right'].includes(data.side)) return null;
+    return { side: data.side, x: Number(data.x) || 0, y: Number(data.y) || 0 };
+  } catch(_) {
+    return null;
+  }
+}
+
+function saveChatDockPosition(pos){
+  try {
+    localStorage.setItem(getChatDockStorageKey(), JSON.stringify(pos));
+  } catch(_) {}
+}
+
+function clamp(v, min, max){
+  return Math.max(min, Math.min(max, v));
+}
+
+function applyChatDock(side = 'right', x = null, y = null, save = false){
+  const drawer = document.getElementById('chatDrawer');
+  if(!drawer) return;
+
+  drawer.classList.remove('dock-left', 'dock-right');
+  drawer.classList.add(side === 'left' ? 'dock-left' : 'dock-right');
+
+  if(x !== null && y !== null){
+    drawer.style.left = `${x}px`;
+    drawer.style.top = `${y}px`;
+    drawer.style.right = 'auto';
+    drawer.style.bottom = 'auto';
+    if(save) saveChatDockPosition({ side, x, y });
+  } else {
+    drawer.style.left = '';
+    drawer.style.top = '';
+    drawer.style.bottom = '12px';
+    drawer.style.right = side === 'left' ? 'auto' : '12px';
+  }
+  updateChatMinButton();
+}
+
+function resetChatDockPosition(){
+  const saved = loadChatDockPosition();
+  if(saved){
+    applyChatDock(saved.side, saved.x, saved.y, false);
+  } else {
+    applyChatDock('right', null, null, false);
+  }
+}
+
+function clampChatToViewport(x, y){
+  const drawer = document.getElementById('chatDrawer');
+  if(!drawer) return { x, y };
+  const rect = drawer.getBoundingClientRect();
+  const pad = 8;
+  const maxX = Math.max(pad, window.innerWidth - rect.width - pad);
+  const maxY = Math.max(pad, window.innerHeight - rect.height - pad);
+  return { x: clamp(x, pad, maxX), y: clamp(y, pad, maxY) };
+}
+
+let chatDrag = {
+  pointerId: null,
+  dragging: false,
+  blockClick: false,
+  startX: 0,
+  startY: 0,
+  offsetX: 0,
+  offsetY: 0
+};
+
+function isChatDockMode(){
+  const drawer = document.getElementById('chatDrawer');
+  return !!drawer && isFullscreenActive() && !drawer.classList.contains('open');
+}
+
+function beginChatDrag(e){
+  const drawer = document.getElementById('chatDrawer');
+  if(!drawer || !isChatDockMode()) return;
+  if(e.button !== undefined && e.button !== 0) return;
+
+  const rect = drawer.getBoundingClientRect();
+  chatDrag.pointerId = e.pointerId ?? null;
+  chatDrag.dragging = false;
+  chatDrag.startX = e.clientX;
+  chatDrag.startY = e.clientY;
+  chatDrag.offsetX = e.clientX - rect.left;
+  chatDrag.offsetY = e.clientY - rect.top;
+
+  drawer.classList.add('dragging');
+  drawer.style.transition = 'none';
+
+  try { drawer.setPointerCapture?.(e.pointerId); } catch(_) {}
+
+  const onMove = (ev) => {
+    if(chatDrag.pointerId !== null && ev.pointerId !== chatDrag.pointerId) return;
+    const dx = Math.abs(ev.clientX - chatDrag.startX);
+    const dy = Math.abs(ev.clientY - chatDrag.startY);
+    if(dx > 6 || dy > 6) chatDrag.dragging = true;
+    if(!chatDrag.dragging) return;
+
+    const pos = clampChatToViewport(ev.clientX - chatDrag.offsetX, ev.clientY - chatDrag.offsetY);
+    drawer.style.left = `${pos.x}px`;
+    drawer.style.top = `${pos.y}px`;
+    drawer.style.right = 'auto';
+    drawer.style.bottom = 'auto';
+  };
+
+  const onUp = (ev) => {
+    if(chatDrag.pointerId !== null && ev.pointerId !== chatDrag.pointerId) return;
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onUp);
+
+    drawer.classList.remove('dragging');
+    drawer.style.transition = '';
+    try { drawer.releasePointerCapture?.(ev.pointerId); } catch(_) {}
+
+    if(!chatDrag.dragging) return;
+
+    chatDrag.blockClick = true;
+    clearTimeout(chatDrag._blockTimer);
+    chatDrag._blockTimer = setTimeout(()=>{ chatDrag.blockClick = false; }, 260);
+
+    const rect2 = drawer.getBoundingClientRect();
+    const side = (rect2.left + rect2.width / 2) < (window.innerWidth / 2) ? 'left' : 'right';
+    const y = clamp(rect2.top, 12, Math.max(12, window.innerHeight - rect2.height - 12));
+    const x = side === 'left' ? 12 : Math.max(12, window.innerWidth - rect2.width - 12);
+    applyChatDock(side, x, y, true);
+  };
+
+  window.addEventListener('pointermove', onMove, { passive:false });
+  window.addEventListener('pointerup', onUp, { passive:false });
+  window.addEventListener('pointercancel', onUp, { passive:false });
+}
+
+function showActivityNotice(message, ms = 2200){
+  const el = document.getElementById('activityNotice');
+  if(!el) return;
+  el.textContent = message;
+  el.classList.add('show');
+  clearTimeout(showActivityNotice._t);
+  showActivityNotice._t = setTimeout(()=>{
+    el.classList.remove('show');
+  }, ms);
+}
+
+function getActorName(state){
+  return (state && (state.name || parts?.[state.by]?.name)) || 'Someone';
+}
+
+function describeRemoteAction(prev, next){
+  if(!prev || !next) return '';
+  const who = getActorName(next);
+
+  if(prev.type !== next.type || prev.url !== next.url || prev.videoId !== next.videoId){
+    return `${who} loaded a new video`;
+  }
+
+  if(prev.playing !== next.playing){
+    return `${who} ${next.playing ? 'played' : 'paused'} the video`;
+  }
+
+  const prevTime = Number(prev.currentTime || 0);
+  const nextTime = Number(next.currentTime || 0);
+  if(Math.abs(prevTime - nextTime) >= 1.5){
+    return `${who} moved to ${fmt(nextTime)}`;
+  }
+
+  const prevVol = Number(prev.volume ?? 1);
+  const nextVol = Number(next.volume ?? 1);
+  if(Math.abs(prevVol - nextVol) >= 0.03){
+    return `${who} adjusted volume to ${Math.round(nextVol * 100)}%`;
+  }
+
+  return '';
+}
+
+function shouldReplaceSourceWith(state){
+  if(!state) return false;
+  if(currentType !== state.type) return true;
+  if((currentUrl || '') !== (state.url || '')) return true;
+  if((currentVideoId || '') !== (state.videoId || '')) return true;
+  if((currentSocialKind || 'reel') !== (state.socialKind || 'reel') && state.type === 'instagram') return true;
+  if(Number(currentState?.biliPage || 1) !== Number(state.biliPage || 1) && state.type === 'bilibili') return true;
+  if((currentState?.fbMode || 'video') !== (state.fbMode || 'video') && state.type === 'facebook') return true;
+  return false;
+}
 
 function getPreferredCaptionLang(){
   const raw = (navigator.language || 'en').toLowerCase();
@@ -2244,10 +2734,12 @@ async function enterRoom(){
   listenTyping();
   listenPlayer();
   startSyncLoop();
+  updateFullscreenButton();
 }
 
 function leaveRoom(){
   closeChatIfOpen();
+  exitFullscreenMode().catch(()=>{});
   refs.me?.remove();
   refs.myTyping?.remove();
   clearInterval(syncTimer);
@@ -2281,22 +2773,9 @@ function leaveRoom(){
     broadcastStream = null;
   }
 
-  if(hlsInstance){ hlsInstance.destroy(); hlsInstance = null; }
-  if(ytPlayer){
-    try { ytPlayer.destroy(); } catch(_) {}
-    ytPlayer = null;
-    ytReady = false;
-  }
+  clearPlaybackSurface();
 
-  const v = videoEl();
-  v.pause();
-  v.removeAttribute('src');
-  v.load();
-
-  document.getElementById('ytMount').innerHTML = '';
-  document.getElementById('ttFrame').src = '';
-
-  document.getElementById('roomScreen').classList.remove('active');
+  document.getElementById('roomScreen').classList.remove('active', 'fs-active');
   document.getElementById('joinScreen').classList.add('active');
   document.getElementById('msgsList').innerHTML = '';
   document.getElementById('partList').innerHTML = '';
@@ -2308,8 +2787,13 @@ function leaveRoom(){
   document.getElementById('seekBar').value = '0';
   document.getElementById('currentTimeLabel').textContent = '0:00';
   document.getElementById('durationLabel').textContent = '0:00';
+  document.getElementById('volumeBar').value = '100';
+  document.getElementById('chatDrawer').classList.remove('open');
+  document.getElementById('currentTimeLabel').textContent = '0:00';
+  document.getElementById('durationLabel').textContent = '0:00';
   document.getElementById('videoEmpty').classList.remove('hidden');
   setVisiblePlayer('none');
+  updateFullscreenButton();
 }
 
 function copyCode(){
@@ -2522,6 +3006,11 @@ document.getElementById('chatField').addEventListener('keypress', e=>{ if(e.key=
 function loadStateIntoUI(state){
   if(!state || !state.type) return;
 
+  const replaceSource = shouldReplaceSourceWith(state);
+  if(replaceSource){
+    clearPlaybackSurface();
+  }
+
   currentType = state.type;
   currentUrl = state.url || '';
   currentVideoId = state.videoId || '';
@@ -2532,10 +3021,10 @@ function loadStateIntoUI(state){
 
   if(state.type === 'direct'){
     setVisiblePlayer('direct');
-    if(state.url !== videoEl().src){
+    const v = videoEl();
+    if(replaceSource || state.url !== v.src){
       loadDirectVideo(state.url, getLiveTargetTime(state), !!state.playing);
     } else {
-      const v = videoEl();
       if(typeof state.volume === 'number') v.volume = Math.max(0, Math.min(1, state.volume));
       const target = getLiveTargetTime(state);
       if(Math.abs((v.currentTime || 0) - target) > SYNC_TOLERANCE_SECONDS){
@@ -2549,7 +3038,7 @@ function loadStateIntoUI(state){
   }
 
   if(state.type === 'youtube'){
-    if(!ytPlayer || !ytReady || currentVideoId !== state.videoId){
+    if(replaceSource || !ytPlayer || !ytReady || currentVideoId !== state.videoId){
       createOrResetYT(state.videoId, getLiveTargetTime(state), !!state.playing, captionEnabled, getPreferredCaptionLang());
       pendingYTApply = state;
     } else {
@@ -2561,7 +3050,7 @@ function loadStateIntoUI(state){
   }
 
   if(state.type === 'tiktok'){
-    if(currentVideoId !== state.videoId){
+    if(replaceSource || currentVideoId !== state.videoId){
       loadTikTokFrame(state.videoId, !!state.playing);
       pendingTTApply = state;
     } else {
@@ -2575,7 +3064,11 @@ function loadStateIntoUI(state){
   if(state.type === 'facebook'){
     const fbHref = state.fbUrl || state.url || '';
     const fbMode = state.fbMode || 'video';
-    loadFacebookFrame(fbHref, !!state.playing, fbMode);
+    if(replaceSource){
+      loadFacebookFrame(fbHref, !!state.playing, fbMode);
+    } else {
+      loadFacebookFrame(fbHref, !!state.playing, fbMode);
+    }
     setVisiblePlayer('facebook');
     resetCaptionUI();
     syncUiFromPlayer();
@@ -2615,6 +3108,8 @@ function loadStateIntoUI(state){
     resetCaptionUI();
     syncUiFromPlayer();
   }
+
+  updateFullscreenButton();
 }
 
 function listenPlayer(){
@@ -2624,6 +3119,8 @@ function listenPlayer(){
       setBroadcastStatus('Ready', false);
       return;
     }
+
+    const prev = currentState ? { ...currentState } : null;
 
     if(!stateReady){
       stateReady = true;
@@ -2638,6 +3135,9 @@ function listenPlayer(){
       return;
     }
 
+    const note = describeRemoteAction(prev, state);
+    if(note) showActivityNotice(note);
+
     isApplyingRemote = true;
     currentState = state;
     loadStateIntoUI(state);
@@ -2651,6 +3151,7 @@ function pushStateFromLocal(force = false){
     type: currentType,
     url: currentUrl,
     videoId: currentVideoId,
+    name: me.name,
     fbUrl: currentState?.fbUrl || '',
     fbMode: currentState?.fbMode || 'video',
     biliPage: currentState?.biliPage || 1,
@@ -2717,6 +3218,10 @@ function loadVideo(){
   const parsed = parseVideoInput(raw);
   if(!parsed){ toast('Paste a valid link starting with https://'); return; }
 
+  clearPlaybackSurface();
+  captionPanelOpen = false;
+  resetCaptionUI();
+
   currentType = parsed.type;
   currentUrl = parsed.url;
   currentVideoId = parsed.videoId || '';
@@ -2727,19 +3232,14 @@ function loadVideo(){
   if(parsed.type === 'direct'){
     loadDirectVideo(parsed.url, 0, true);
   } else if(parsed.type === 'youtube'){
-    resetCaptionUI();
     createOrResetYT(parsed.videoId, parsed.startAt || 0, true, true, getPreferredCaptionLang());
   } else if(parsed.type === 'facebook'){
-    resetCaptionUI();
     loadFacebookFrame(parsed.fbUrl || parsed.url, true, parsed.fbMode || 'video');
   } else if(parsed.type === 'bilibili'){
-    resetCaptionUI();
     loadBilibiliFrame(parsed.videoId, parsed.biliPage || 1, true, parsed.startAt || 0);
   } else if(parsed.type === 'tiktok'){
-    resetCaptionUI();
     loadTikTokFrame(parsed.videoId, true);
   } else if(parsed.type === 'instagram'){
-    resetCaptionUI();
     currentSocialKind = parsed.socialKind || 'reel';
     loadInstagramFrame(parsed.videoId, currentSocialKind);
   } else if(parsed.type === 'broadcast'){
@@ -2750,6 +3250,7 @@ function loadVideo(){
     type: parsed.type,
     url: parsed.url,
     videoId: parsed.videoId || '',
+    name: me.name,
     fbUrl: parsed.fbUrl || '',
     fbMode: parsed.fbMode || 'video',
     biliPage: parsed.biliPage || 1,
@@ -2913,15 +3414,89 @@ function toggleCam(){
 }
 
 function toggleChat(){
-  document.getElementById('chatDrawer').classList.toggle('open');
+  const drawer = document.getElementById('chatDrawer');
+  if(!drawer || chatDrag.blockClick) return;
+
+  drawer.classList.toggle('open');
+  if(drawer.classList.contains('open')){
+    updateChatMinButton();
+    setTimeout(()=>{
+      const l=document.getElementById('msgsList');
+      l.scrollTop = l.scrollHeight;
+    },420);
+    return;
+  }
+
+  if(isFullscreenActive()){
+    const saved = loadChatDockPosition();
+    if(saved){
+      applyChatDock(saved.side, saved.x, saved.y, false);
+    } else {
+      resetChatDockPosition();
+    }
+  }
+  updateChatMinButton();
   setTimeout(()=>{
     const l=document.getElementById('msgsList');
     l.scrollTop = l.scrollHeight;
-  },420);
+  },120);
 }
 function closeChatIfOpen(){
-  document.getElementById('chatDrawer').classList.remove('open');
+  const drawer = document.getElementById('chatDrawer');
+  if(!drawer) return;
+  drawer.classList.remove('open');
+  if(isFullscreenActive()){
+    const saved = loadChatDockPosition();
+    if(saved){
+      applyChatDock(saved.side, saved.x, saved.y, false);
+    } else {
+      resetChatDockPosition();
+    }
+  }
+  updateChatMinButton();
 }
+
+function syncChatDockToFullscreenState(){
+  const drawer = document.getElementById('chatDrawer');
+  if(!drawer) return;
+
+  if(isFullscreenActive() && !drawer.classList.contains('open')){
+    const saved = loadChatDockPosition();
+    if(saved){
+      applyChatDock(saved.side, saved.x, saved.y, false);
+    } else {
+      applyChatDock('right', null, null, false);
+    }
+  } else if(!isFullscreenActive()){
+    drawer.classList.remove('dock-left', 'dock-right', 'dragging');
+    drawer.style.left = '';
+    drawer.style.top = '';
+    drawer.style.right = '';
+    drawer.style.bottom = '';
+  }
+
+  updateChatMinButton();
+}
+
+document.getElementById('chatDrawer')?.addEventListener('pointerdown', (e)=>{
+  if(!isChatDockMode()) return;
+  if(e.target.closest('.chat-field') || e.target.closest('.send-btn')) return;
+  beginChatDrag(e);
+});
+
+document.addEventListener('fullscreenchange', ()=>{
+  const room = document.getElementById('roomScreen');
+  const active = !!document.fullscreenElement;
+  room?.classList.toggle('fs-active', active);
+  document.body.classList.toggle('fs-active', active);
+  updateFullscreenButton();
+  syncChatDockToFullscreenState();
+  if(active){
+    lockLandscapeOrientation();
+  } else {
+    unlockOrientation();
+  }
+});
 
 document.getElementById('videoUrlInput').addEventListener('keypress', e=>{
   if(e.key === 'Enter') loadVideo();
@@ -2930,6 +3505,8 @@ document.getElementById('videoUrlInput').addEventListener('keypress', e=>{
 document.getElementById('volumeBar').value = '100';
 document.getElementById('seekBar').value = '0';
 renderCaptionPanel();
+updateFullscreenButton();
+syncChatDockToFullscreenState();
 </script>
 </body>
 </html>
