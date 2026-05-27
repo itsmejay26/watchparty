@@ -1424,36 +1424,20 @@ function extractTikTokId(url){
   return '';
 }
 
-function extractFacebookInfo(url){
-  try {
-    const parsed = new URL(url);
-    const host = parsed.hostname.replace(/^www\./i, '').toLowerCase();
-    if(!host.includes('facebook.com')) return { id:'', href:'', mode:'video' };
-
-    const hrefParam = parsed.searchParams.get('href');
-    const rawHref = hrefParam ? decodeURIComponent(hrefParam) : url;
-    const path = (parsed.pathname || '').toLowerCase();
-    const isShareLink = path.includes('/share/') || path.includes('/sharer/') || path.includes('/posts/') || path.includes('/reel/');
-    const isVideoLink = path.includes('/videos/') || path.includes('/watch/') || /[?&]v=\d+/.test(parsed.search);
-
-    return {
-      id: 'fb_' + btoa(rawHref).replace(/=+$/,'').slice(0,24),
-      href: rawHref,
-      mode: isShareLink && !isVideoLink ? 'post' : 'video'
-    };
-  } catch(_) {
-    if(/facebook\.com/i.test(url)){
-      const lower = url.toLowerCase();
-      const isShareLink = lower.includes('/share/') || lower.includes('/sharer/') || lower.includes('/posts/') || lower.includes('/reel/');
-      const isVideoLink = lower.includes('/videos/') || lower.includes('/watch/');
-      return {
-        id: 'fb_' + btoa(url).replace(/=+$/,'').slice(0,24),
-        href: url,
-        mode: isShareLink && !isVideoLink ? 'post' : 'video'
-      };
-    }
-    return { id:'', href:'', mode:'video' };
+function buildFacebookSrc(href, autoplay = false, mode = 'video'){
+  // Use URLSearchParams so every value is properly encoded (fixes the broken width=100% bug)
+  const params = new URLSearchParams({
+    href:            href,
+    show_text:       '0',
+    autoplay:        autoplay ? '1' : '0',
+    mute:            autoplay ? '1' : '0',
+    width:           '560',
+    allowfullscreen: 'true',
+  });
+  if(mode === 'post'){
+    return `https://www.facebook.com/plugins/post.php?${params.toString()}`;
   }
+  return `https://www.facebook.com/plugins/video.php?${params.toString()}`;
 }
 
 function extractBilibiliInfo(url){
