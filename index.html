@@ -166,6 +166,22 @@ button, input, input[type="range"], .video-wrap, video, iframe {
   object-fit:contain;
   background:#000;
 }
+
+/* ── Facebook SDK mount ── */
+#fbMount {
+  width:100%; height:100%;
+  background:#000;
+  display:flex; align-items:center; justify-content:center;
+  overflow:hidden;
+}
+#fbMount .fb-video,
+#fbMount iframe,
+#fbMount span {
+  width:100% !important;
+  height:100% !important;
+  max-width:100% !important;
+}
+
 .video-empty {
   position:absolute; inset:0;
   display:flex; flex-direction:column; align-items:center; justify-content:center;
@@ -615,7 +631,6 @@ button, input, input[type="range"], .video-wrap, video, iframe {
   to   { opacity:1; transform:translateY(0) scale(1); }
 }
 
-
 .activity-notice {
   position:fixed;
   top:14px;
@@ -807,10 +822,12 @@ button, input, input[type="range"], .video-wrap, video, iframe {
   .caption-toggle { padding:8px 11px; }
   .msg-body { max-width:78%; }
 }
-
 </style>
 </head>
 <body>
+
+<!-- Required by Facebook JS SDK -->
+<div id="fb-root"></div>
 
 <div id="joinScreen" class="screen active">
   <div class="brand">
@@ -861,6 +878,8 @@ button, input, input[type="range"], .video-wrap, video, iframe {
 
     <video id="mainVideo" playsinline class="hidden"></video>
     <div id="ytMount" class="hidden"></div>
+    <!-- Facebook SDK renders inside this div -->
+    <div id="fbMount" class="hidden"></div>
     <iframe id="ttFrame" class="hidden" allowfullscreen allow="autoplay; fullscreen; encrypted-media; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin"></iframe>
 
     <div class="url-bar">
@@ -1007,6 +1026,11 @@ let ttMuted = false;
 let currentSocialKind = 'reel';
 let pendingTTApply = null;
 
+// ── Facebook SDK state ──
+let fbSDKPromise = null;
+let fbPlayerInstance = null;
+let fbXFBMLReadyCallback = null;
+
 let captionPanelOpen = false;
 let captionTracks = [];
 let selectedCaptionIndex = -1;
@@ -1052,6 +1076,15 @@ function fmt(s){
 function videoEl(){ return document.getElementById('mainVideo'); }
 
 function clearPlaybackSurface(){
+  // ── Facebook cleanup ──
+  fbPlayerInstance = null;
+  if(fbXFBMLReadyCallback && window.FB){
+    try { FB.Event.unsubscribe('xfbml.ready', fbXFBMLReadyCallback); } catch(_) {}
+    fbXFBMLReadyCallback = null;
+  }
+  const fbMount = document.getElementById('fbMount');
+  if(fbMount) fbMount.innerHTML = '';
+
   const v = videoEl();
   try { v.pause(); } catch(_) {}
   try {
@@ -1351,18 +1384,23 @@ function setYouTubeCaptionsEnabled(enable, preferredIndex = selectedCaptionIndex
   renderCaptionPanel();
 }
 
+// ── setVisiblePlayer — updated to handle fbMount ──
 function setVisiblePlayer(type){
   const v = document.getElementById('mainVideo');
   const y = document.getElementById('ytMount');
   const t = document.getElementById('ttFrame');
+  const f = document.getElementById('fbMount');
 
   v.classList.add('hidden');
   y.classList.add('hidden');
   t.classList.add('hidden');
+  if(f) f.classList.add('hidden');
 
-  if(type === 'direct') v.classList.remove('hidden');
-  if(type === 'youtube') y.classList.remove('hidden');
-  if(type === 'tiktok' || type === 'instagram' || type === 'facebook' || type === 'bilibili') t.classList.remove('hidden');
+  if(type === 'direct')    v.classList.remove('hidden');
+  if(type === 'youtube')   y.classList.remove('hidden');
+  if(type === 'tiktok' || type === 'instagram' || type === 'bilibili')
+                           t.classList.remove('hidden');
+  if(type === 'facebook' && f) f.classList.remove('hidden');
   if(type === 'broadcast') v.classList.remove('hidden');
 
   document.getElementById('videoEmpty').classList.toggle('hidden', type !== 'none');
@@ -1377,6 +1415,7 @@ function setBroadcastStatus(text, showOverlay = false){
   if(overlay) overlay.classList.toggle('show', !!showOverlay);
 }
 
+// ── URL parsing ──
 function parseVideoInput(raw){
   const url = raw.trim();
   if(!/^https?:\/\//i.test(url)) return null;
@@ -1424,20 +1463,56 @@ function extractTikTokId(url){
   return '';
 }
 
-function buildFacebookSrc(href, autoplay = false, mode = 'video'){
-  // Use URLSearchParams so every value is properly encoded (fixes the broken width=100% bug)
-  const params = new URLSearchParams({
-    href:            href,
-    show_text:       '0',
-    autoplay:        autoplay ? '1' : '0',
-    mute:            autoplay ? '1' : '0',
-    width:           '560',
-    allowfullscreen: 'true',
-  });
-  if(mode === 'post'){
-    return `https://www.facebook.com/plugins/post.php?${params.toString()}`;
+// ── Facebook URL extraction (fixed) ──
+function extractFacebookInfo(url){
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./i, '').toLowerCase();
+    if(!host.includes('facebook.com')) return { id:'', href:'', mode:'video' };
+
+    const hrefParam = parsed.searchParams.get('href');
+    const rawHref = hrefParam ? decodeURIComponent(hrefParam) : url;
+    const path = (parsed.pathname || '').toLowerCase();
+
+    // Check video-type share links BEFORE the generic /share/ check
+    const isVideoShareLink = /\/share\/v\//i.test(path);
+    const isReelLink       = /\/reel\//i.test(path) || /\/share\/r\//i.test(path);
+    const isVideoLink      = path.includes('/videos/') || path.includes('/watch/') ||
+                             isVideoShareLink || /[?&]v=\d+/.test(parsed.search);
+    const isPostOnlyLink   = (path.includes('/share/') || path.includes('/sharer/') ||
+                             path.includes('/posts/')) && !isVideoShareLink && !isReelLink;
+
+    let safeId;
+    try {
+      safeId = 'fb_' + btoa(unescape(encodeURIComponent(rawHref))).replace(/=+$/,'').slice(0,24);
+    } catch(_) {
+      safeId = 'fb_' + Math.random().toString(36).slice(2,14);
+    }
+
+    return {
+      id: safeId,
+      href: rawHref,
+      mode: (isVideoLink || isReelLink) ? 'video' : (isPostOnlyLink ? 'post' : 'video')
+    };
+  } catch(_) {
+    if(/facebook\.com/i.test(url)){
+      const lower = url.toLowerCase();
+      const isVideoLink = lower.includes('/videos/') || lower.includes('/watch/') ||
+                          lower.includes('/share/v/');
+      let safeId;
+      try {
+        safeId = 'fb_' + btoa(unescape(encodeURIComponent(url))).replace(/=+$/,'').slice(0,24);
+      } catch(_) {
+        safeId = 'fb_' + Math.random().toString(36).slice(2,14);
+      }
+      return {
+        id: safeId,
+        href: url,
+        mode: isVideoLink ? 'video' : 'post'
+      };
+    }
+    return { id:'', href:'', mode:'video' };
   }
-  return `https://www.facebook.com/plugins/video.php?${params.toString()}`;
 }
 
 function extractBilibiliInfo(url){
@@ -1468,8 +1543,8 @@ function extractBilibiliInfo(url){
 function extractInstagramInfo(url){
   const patterns = [
     { kind:'reel', re:/instagram\.com\/reel\/([A-Za-z0-9._-]+)/i },
-    { kind:'p', re:/instagram\.com\/p\/([A-Za-z0-9._-]+)/i },
-    { kind:'tv', re:/instagram\.com\/tv\/([A-Za-z0-9._-]+)/i }
+    { kind:'p',    re:/instagram\.com\/p\/([A-Za-z0-9._-]+)/i },
+    { kind:'tv',   re:/instagram\.com\/tv\/([A-Za-z0-9._-]+)/i }
   ];
   for(const p of patterns){
     const m = url.match(p.re);
@@ -1478,6 +1553,7 @@ function extractInstagramInfo(url){
   return { kind:'reel', id:'' };
 }
 
+// ── Player time/state helpers ──
 function getDuration(){
   if(currentType === 'direct'){
     const v = videoEl();
@@ -1487,11 +1563,15 @@ function getDuration(){
     const d = ytPlayer.getDuration?.();
     return isFinite(d) ? d : 0;
   }
-  if(currentType === 'tiktok' || currentType === 'instagram' || currentType === 'facebook' || currentType === 'bilibili'){
+  if(currentType === 'facebook'){
+    try { const d = fbPlayerInstance?.getDuration(); return isFinite(d) ? d : 0; } catch(_) { return 0; }
+  }
+  if(currentType === 'tiktok' || currentType === 'instagram' || currentType === 'bilibili'){
     return isFinite(ttDuration) ? ttDuration : 0;
   }
   return 0;
 }
+
 function getCurrentTime(){
   if(currentType === 'direct'){
     return videoEl().currentTime || 0;
@@ -1499,11 +1579,15 @@ function getCurrentTime(){
   if(currentType === 'youtube' && ytPlayer && ytReady){
     return ytPlayer.getCurrentTime?.() || 0;
   }
-  if(currentType === 'tiktok' || currentType === 'instagram' || currentType === 'facebook' || currentType === 'bilibili'){
+  if(currentType === 'facebook'){
+    try { return fbPlayerInstance?.getCurrentPosition() || 0; } catch(_) { return 0; }
+  }
+  if(currentType === 'tiktok' || currentType === 'instagram' || currentType === 'bilibili'){
     return ttCurrentTime || 0;
   }
   return 0;
 }
+
 function isPlaying(){
   if(currentType === 'direct'){
     return !videoEl().paused;
@@ -1516,6 +1600,7 @@ function isPlaying(){
   }
   return false;
 }
+
 function getVolume(){
   if(currentType === 'direct'){
     return videoEl().volume ?? 1;
@@ -1523,11 +1608,18 @@ function getVolume(){
   if(currentType === 'youtube' && ytPlayer && ytReady){
     return (ytPlayer.getVolume?.() ?? 100) / 100;
   }
-  if(currentType === 'tiktok' || currentType === 'instagram' || currentType === 'facebook' || currentType === 'bilibili'){
+  if(currentType === 'facebook'){
+    try {
+      if(fbPlayerInstance?.isMuted()) return 0;
+      return fbPlayerInstance?.getVolume() ?? (currentState?.volume ?? 1);
+    } catch(_) { return currentState?.volume ?? 1; }
+  }
+  if(currentType === 'tiktok' || currentType === 'instagram' || currentType === 'bilibili'){
     return ttMuted ? 0 : (currentState?.volume ?? 1);
   }
   return 1;
 }
+
 function getLiveTargetTime(state){
   if(!state) return 0;
   const base = Number(state.currentTime || 0);
@@ -1591,6 +1683,7 @@ function syncUiFromPlayer(){
   document.getElementById('volumeBar').value = String(Math.round(getVolume() * 100));
 }
 
+// ── YouTube API ──
 function ensureYouTubeApi(){
   if(window.YT?.Player) return Promise.resolve();
   if(ytApiPromise) return ytApiPromise;
@@ -1733,23 +1826,91 @@ function syncYouTubeCaptions(silent = false){
   }
 }
 
-function buildTikTokSrc(id, autoplay){
-  return `https://www.tiktok.com/player/v1/${id}?controls=0&progress_bar=0&play_button=0&volume_control=0&fullscreen_button=0&timestamp=1&autoplay=${autoplay ? 1 : 0}&music_info=0&description=0`;
+// ── Facebook SDK functions ──
+function ensureFBSDK(){
+  if(window.FB && window.FB.XFBML) return Promise.resolve();
+  if(fbSDKPromise) return fbSDKPromise;
+  fbSDKPromise = new Promise(resolve=>{
+    const prev = window.fbAsyncInit;
+    window.fbAsyncInit = function(){
+      if(typeof prev === 'function') prev();
+      FB.init({ xfbml: true, version: 'v19.0' });
+      resolve();
+    };
+    const tag = document.createElement('script');
+    tag.async = true; tag.defer = true; tag.crossOrigin = 'anonymous';
+    tag.src = 'https://connect.facebook.net/en_US/sdk.js';
+    document.head.appendChild(tag);
+  });
+  return fbSDKPromise;
 }
 
-function buildFacebookSrc(href, autoplay = false, mode = 'video'){
-  const target = encodeURIComponent(href);
-  const common = `show_text=0&autoplay=${autoplay ? 1 : 0}&width=100%`;
-  if(mode === 'post'){
-    return `https://www.facebook.com/plugins/post.php?href=${target}&${common}`;
+function loadFacebookSDKVideo(url, autoplay = false){
+  const mount = document.getElementById('fbMount');
+  if(!mount) return;
+  fbPlayerInstance = null;
+
+  // Remove previous XFBML listener
+  if(fbXFBMLReadyCallback && window.FB){
+    try { FB.Event.unsubscribe('xfbml.ready', fbXFBMLReadyCallback); } catch(_) {}
   }
-  return `https://www.facebook.com/plugins/video.php?href=${target}&${common}&mute=${autoplay ? 1 : 0}`;
+  mount.innerHTML = '';
+
+  ensureFBSDK().then(()=>{
+    const div = document.createElement('div');
+    div.className = 'fb-video';
+    div.id = 'fb-video-player';
+    div.setAttribute('data-href', url);
+    div.setAttribute('data-width', 'auto');
+    div.setAttribute('data-allowfullscreen', 'true');
+    div.setAttribute('data-autoplay', autoplay ? 'true' : 'false');
+    div.setAttribute('data-show-text', 'false');
+    mount.appendChild(div);
+
+    fbXFBMLReadyCallback = function(msg){
+      if(msg.type === 'video' && msg.id === 'fb-video-player'){
+        fbPlayerInstance = msg.instance;
+        if(autoplay){ try { fbPlayerInstance.play(); } catch(_) {} }
+        syncUiFromPlayer();
+      }
+    };
+    FB.Event.subscribe('xfbml.ready', fbXFBMLReadyCallback);
+    FB.XFBML.parse(mount);
+  });
 }
-function loadFacebookFrame(href, autoplay = false, mode = 'video'){
+
+function applyFBState(state){
+  if(!fbPlayerInstance){
+    loadFacebookSDKVideo(state.fbUrl || state.url, !!state.playing);
+    return;
+  }
+  const target = getLiveTargetTime(state);
+  try {
+    const pos = fbPlayerInstance.getCurrentPosition() || 0;
+    if(Math.abs(pos - target) > SYNC_TOLERANCE_SECONDS) fbPlayerInstance.seek(target);
+  } catch(_) {}
+  try {
+    const vol = typeof state.volume === 'number' ? state.volume : 1;
+    fbPlayerInstance.setVolume(vol);
+    if(vol <= 0) fbPlayerInstance.mute(); else fbPlayerInstance.unmute();
+  } catch(_) {}
+  try {
+    if(state.playing) fbPlayerInstance.play();
+    else fbPlayerInstance.pause();
+  } catch(_) {}
+}
+
+// ── loadFacebookFrame — now uses the SDK ──
+function loadFacebookFrame(href, autoplay = false){
   setVisiblePlayer('facebook');
   document.getElementById('videoEmpty').classList.add('hidden');
-  document.getElementById('ttFrame').src = buildFacebookSrc(href, autoplay, mode);
+  loadFacebookSDKVideo(href, autoplay);
   resetCaptionUI();
+}
+
+// ── TikTok / Bilibili / Instagram ──
+function buildTikTokSrc(id, autoplay){
+  return `https://www.tiktok.com/player/v1/${id}?controls=0&progress_bar=0&play_button=0&volume_control=0&fullscreen_button=0&timestamp=1&autoplay=${autoplay ? 1 : 0}&music_info=0&description=0`;
 }
 
 function buildBilibiliSrc(id, page = 1, autoplay = false, startAt = 0){
@@ -1797,7 +1958,7 @@ function loadInstagramFrame(id, kind = 'reel'){
   renderCaptionPanel();
 }
 
-
+// ── WebRTC broadcast ──
 function hasBroadcastSupport(){
   return !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia && window.RTCPeerConnection);
 }
@@ -2124,9 +2285,10 @@ function viewerJoinBroadcast(state){
         setBroadcastStatus('Still connecting…', true);
       }
     }, 4500);
-    // viewers wait for the host offer, then the remote stream arrives via ontrack
   }
 }
+
+// ── TikTok postMessage bridge ──
 function ttPost(type, value = null){
   const f = document.getElementById('ttFrame');
   if(!f?.contentWindow) return;
@@ -2178,6 +2340,7 @@ window.addEventListener('message', (event) => {
   }
 });
 
+// ── Captions ──
 function resetCaptionUI(){
   captionTracks = [];
   selectedCaptionIndex = -1;
@@ -2452,6 +2615,7 @@ function toggleCaptionsPanel(){
   renderCaptionPanel();
 }
 
+// ── Direct video loader ──
 function loadDirectVideo(url, startAt = 0, autoplay = false){
   const v = videoEl();
   setVisiblePlayer('direct');
@@ -2520,6 +2684,7 @@ function loadDirectVideo(url, startAt = 0, autoplay = false){
   }
 }
 
+// ── Avatar grid ──
 (function buildAvatarGrid(){
   const g = document.getElementById('avatarGrid');
   SEEDS.forEach((s,i)=>{
@@ -2930,13 +3095,14 @@ function loadStateIntoUI(state){
     syncUiFromPlayer();
   }
 
+  // ── Facebook: use SDK player ──
   if(state.type === 'facebook'){
     const fbHref = state.fbUrl || state.url || '';
-    const fbMode = state.fbMode || 'video';
-    if(replaceSource){
-      loadFacebookFrame(fbHref, !!state.playing, fbMode);
+    const prevHref = currentState?.fbUrl || currentState?.url || '';
+    if(replaceSource || fbHref !== prevHref){
+      loadFacebookFrame(fbHref, !!state.playing);
     } else {
-      loadFacebookFrame(fbHref, !!state.playing, fbMode);
+      applyFBState(state);
     }
     setVisiblePlayer('facebook');
     resetCaptionUI();
@@ -3103,7 +3269,7 @@ function loadVideo(){
   } else if(parsed.type === 'youtube'){
     createOrResetYT(parsed.videoId, parsed.startAt || 0, true, true, getPreferredCaptionLang());
   } else if(parsed.type === 'facebook'){
-    loadFacebookFrame(parsed.fbUrl || parsed.url, true, parsed.fbMode || 'video');
+    loadFacebookFrame(parsed.fbUrl || parsed.url, true);
   } else if(parsed.type === 'bilibili'){
     loadBilibiliFrame(parsed.videoId, parsed.biliPage || 1, true, parsed.startAt || 0);
   } else if(parsed.type === 'tiktok'){
@@ -3120,7 +3286,7 @@ function loadVideo(){
     url: parsed.url,
     videoId: parsed.videoId || '',
     name: me.name,
-    fbUrl: parsed.fbUrl || '',
+    fbUrl: parsed.fbUrl || parsed.url || '',
     fbMode: parsed.fbMode || 'video',
     biliPage: parsed.biliPage || 1,
     socialKind: parsed.socialKind || currentSocialKind || 'reel',
@@ -3141,7 +3307,10 @@ function playVideo(){
   if(currentType === 'direct') videoEl().play().catch(()=>{});
   if(currentType === 'youtube' && ytPlayer && ytReady) ytPlayer.playVideo();
   if(currentType === 'tiktok') ttPost('play');
-  if(currentType === 'facebook') loadFacebookFrame(currentState?.fbUrl || currentUrl, true, currentState?.fbMode || 'video');
+  if(currentType === 'facebook'){
+    if(fbPlayerInstance){ try { fbPlayerInstance.play(); } catch(_) {} }
+    else loadFacebookFrame(currentState?.fbUrl || currentUrl, true);
+  }
   if(currentType === 'bilibili') loadBilibiliFrame(currentVideoId, currentState?.biliPage || 1, true, getCurrentTime());
   if(currentType === 'instagram') toast('Instagram embeds do not support remote play controls.');
 
@@ -3155,7 +3324,10 @@ function pauseVideo(){
   if(currentType === 'direct') videoEl().pause();
   if(currentType === 'youtube' && ytPlayer && ytReady) ytPlayer.pauseVideo();
   if(currentType === 'tiktok') ttPost('pause');
-  if(currentType === 'facebook') toast('Facebook embeds do not support remote pause controls.');
+  if(currentType === 'facebook'){
+    if(fbPlayerInstance){ try { fbPlayerInstance.pause(); } catch(_) {} }
+    else toast('Facebook player not ready yet.');
+  }
   if(currentType === 'bilibili') toast('Bilibili embeds do not support remote pause controls.');
   if(currentType === 'instagram') toast('Instagram embeds do not support remote pause controls.');
 
@@ -3176,7 +3348,8 @@ function seekBy(sec){
   } else if(currentType === 'tiktok'){
     ttPost('seekTo', target);
   } else if(currentType === 'facebook'){
-    toast('Facebook embeds do not support seeking.');
+    if(fbPlayerInstance){ try { fbPlayerInstance.seek(target); } catch(_) {} }
+    else toast('Facebook player not ready yet.');
   } else if(currentType === 'bilibili'){
     loadBilibiliFrame(currentVideoId, currentState?.biliPage || 1, true, target);
   } else if(currentType === 'instagram'){
@@ -3212,7 +3385,12 @@ function setLocalVolume(percent){
     if(v === 0) ttPost('mute');
     else ttPost('unMute');
   } else if(currentType === 'facebook'){
-    toast('Facebook embeds do not support volume control.');
+    if(fbPlayerInstance){
+      try {
+        fbPlayerInstance.setVolume(v / 100);
+        if(v === 0) fbPlayerInstance.mute(); else fbPlayerInstance.unmute();
+      } catch(_) {}
+    }
   } else if(currentType === 'bilibili'){
     toast('Bilibili embeds do not support volume control.');
   } else if(currentType === 'instagram'){
@@ -3241,7 +3419,7 @@ document.getElementById('seekBar').addEventListener('change', function(){
   } else if(currentType === 'tiktok'){
     ttPost('seekTo', target);
   } else if(currentType === 'facebook'){
-    toast('Facebook embeds do not support seeking.');
+    if(fbPlayerInstance){ try { fbPlayerInstance.seek(target); } catch(_) {} }
   } else if(currentType === 'bilibili'){
     toast('Bilibili embeds do not support seeking.');
   } else if(currentType === 'instagram'){
